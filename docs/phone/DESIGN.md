@@ -44,9 +44,11 @@ group calls, mute/hold/speaker/Bluetooth routing, do-not-disturb.
    complete SIP stack on Linux, speaks PipeWire natively, supports opus + video, and runs as a separate
    process we control over its `ctrl_tcp` module (netstring-framed JSON). A crash in the media stack
    cannot take the UI down, and the stack can later be swapped for pjsip without touching the app.
-   *Caveat:* baresip is not installed on the dev laptop; the adapter is written against the documented
-   `ctrl_tcp` protocol and tested against a fake server. Arch's `baresip` package must be checked for the
-   `ctrl_tcp` and `pipewire` modules before packaging.
+   *Verified* against baresip 4.11 and Asterisk 20 in a throwaway container (`apps/phone/tests/sipbed/`,
+   `tests/test_sip.py`): ringing, answer, decline (486), cancel, screening rejects, hold/resume both
+   ways, mute, RFC 4733 DTMF, hangup, and real two-way audio through the PBX. baresip must load
+   `account`, `menu` and `ctrl_tcp`: every ctrl_tcp command is a `menu` command. Arch's `baresip`
+   package must be checked for those plus `pipewire` (and `opus`, `srtp`) before packaging.
 3. **Matrix (MatrixRTC) is the second backend**, targeted once a LiveKit client can run natively
    without a browser engine. The interface already models what it needs (room-based group calls,
    participants joining/leaving, per-participant video).
@@ -257,14 +259,20 @@ spoofing, DND with favorites, allowed groups and repeat callers); number detecti
 paste and opt-in clipboard detection; PipeWire route listing/switching incl. Bluetooth sinks;
 notifications per the shell contract; the phone-size UI (screenshots in `docs/phone/screenshots/`).
 
-Not done yet: real media (no RTP elements in this GStreamer install), the baresip backend against a
-real baresip, voicemail recording/playback, video rendering, SIP account setup UI (credentials via
+SIP through baresip (v0.2): calls placed and received by the app through a real Asterisk, with audio
+carried end to end (sine-tone source and WAV sink, so no sound devices are used); see §2.2.
+
+Not done yet: media on the loopback backend (no RTP elements in this GStreamer install), group calls
+over SIP (baresip's menu has no conference command; needs a server-side bridge such as ConfBridge),
+dialling short PBX extensions from the keypad (only E.164 numbers and `sip:` URIs are accepted),
+diverting a *ringing* SIP call to a voicemail URI (ctrl_tcp cannot send a 302; busy is used, which
+PBXs forward to voicemail), video over SIP (untested: the test bed has no video modules), TLS/SRTP
+in the test bed, voicemail recording/playback, video rendering, SIP account setup UI (credentials via
 libsecret), MatrixRTC.
 
 Next steps, in order:
 
-1. Run the baresip backend against a local Asterisk in a container (loopback SIP, no external
-   accounts); fix command-name differences in `backends/baresip.py:COMMANDS`.
+1. ~~Run the baresip backend against a local Asterisk in a container~~ (done, `tests/test_sip.py`).
 2. SIP account page (server, user, libsecret password, TLS/SRTP policy) that writes baresip's config.
 3. Media on the loopback backend (opus over UDP via GStreamer once `gst-plugins-good` is installed),
    so audio routing and mute can be tested end to end.

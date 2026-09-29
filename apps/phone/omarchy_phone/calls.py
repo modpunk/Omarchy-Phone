@@ -275,6 +275,8 @@ class CallManager:
             call.participants = [self._who(p)[0] if isinstance(p, str) and p.startswith("+") else p
                                  for p in ev.get("participants", [])]
             self._publish(call)
+        elif t == "dtmf":  # a key the far end pressed (RFC 4733)
+            self.emit({"type": "dtmf", "call_id": call.id, "digit": ev.get("digit", "")})
         elif t == "ended":
             self._end(call, ev.get("reason", "normal"))
 

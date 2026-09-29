@@ -76,6 +76,7 @@ Settings keys: `region`, `own_number`, `dnd`, `dnd_action`, `dnd_repeat_callers`
 | `contacts`, `history`, `lists`, `settings` | | data changed, reload |
 | `dnd` | `on` | do-not-disturb toggled |
 | `show` | `page`, `number`, `call_id` | UI should come forward |
+| `dtmf` | `call_id`, `digit` | the far end pressed a key (SIP: RFC 4733) |
 | `error` | `detail` | an asynchronous failure |
 
 ## Shell hooks

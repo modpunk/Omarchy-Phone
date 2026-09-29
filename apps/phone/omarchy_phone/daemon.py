@@ -58,7 +58,7 @@ def db_path(profile: str) -> str:
 
 
 class PhoneService:
-    def __init__(self, profile="default", backend="loopback", number="", display="", ui_cmd=None):
+    def __init__(self, profile="default", backend="loopback", number="", display="", ui_cmd=None, baresip=""):
         self.profile = profile
         self.store = Store(db_path(profile))
         if number:
@@ -68,8 +68,11 @@ class PhoneService:
         self.ui_cmd = ui_cmd
         self.audio = AudioRouter()
         self.notifier = Notifier(self._on_notification)
-        backends = [create(backend, {"profile": profile, "number": self.store.get("own_number"),
-                                     "display": display or profile})]
+        config = {"profile": profile, "number": self.store.get("own_number"), "display": display or profile}
+        if baresip:  # host:port of baresip's ctrl_tcp
+            host, _, port = baresip.rpartition(":")
+            config.update(host=host or "127.0.0.1", port=int(port))
+        backends = [create(backend, config)]
         if backend != "loopback":
             backends.append(create("loopback", {"profile": profile, "number": self.store.get("own_number"),
                                                 "display": display or profile}))
@@ -294,13 +297,15 @@ def main(argv=None):
                     help="instance name; extra instances let you call yourself over loopback")
     ap.add_argument("--backend", default="loopback", choices=["loopback", "sip"])
     ap.add_argument("--number", default="", help="this instance's own number (loopback directory, spoof filter)")
+    ap.add_argument("--baresip", default=os.environ.get("OMARCHY_PHONE_BARESIP", ""), metavar="HOST:PORT",
+                    help="baresip ctrl_tcp address for --backend sip (default 127.0.0.1:4444)")
     ap.add_argument("--display", default="", help="display name sent to loopback peers")
     ap.add_argument("--ui-cmd", default=os.environ.get("OMARCHY_PHONE_UI_CMD", ""),
                     help="command that opens the UI (for incoming calls)")
     args = ap.parse_args(argv)
 
     loop = GLib.MainLoop()
-    svc = PhoneService(args.profile, args.backend, args.number, args.display, args.ui_cmd or None)
+    svc = PhoneService(args.profile, args.backend, args.number, args.display, args.ui_cmd or None, args.baresip)
 
     def on_bus(conn, _name):
         svc.export(conn)

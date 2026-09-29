@@ -1,0 +1,1 @@
+<sip:1001@127.0.0.1>;auth_pass=sipbed-test-only;regint=300;audio_codecs=PCMU,PCMA

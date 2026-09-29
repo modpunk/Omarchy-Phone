@@ -194,12 +194,42 @@ class Baresip(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "incoming")
         cid = events[-1]["call_id"]
         b.answer(cid)
-        self.assertIn(b'"command": "callfind", "params": "x1"', sent[0])
+        self.assertIn(b'"command": "accept", "params": "x1"', sent[-1])
+        b.set_mute(cid, True)
+        self.assertIn(b'"command": "callfind", "params": "x1"', sent[-2])
+        self.assertIn(b'"command": "mute", "params": "true"', sent[-1])
         b.feed(netstring(b'{"event":true,"class":"call","type":"CALL_ESTABLISHED","id":"x1"}'))
         self.assertEqual(events[-1], {"type": "state", "call_id": cid, "state": "active"})
-        b.feed(netstring(b'{"event":true,"class":"call","type":"CALL_CLOSED","id":"x1","param":"486 Busy"}'))
+        b.feed(netstring(b'{"event":true,"class":"call","type":"CALL_HOLD","id":"x1"}'))
+        self.assertEqual(events[-1], {"type": "state", "call_id": cid, "state": "remote_held"})
+        b.set_hold(cid, True)
+        self.assertIn(b'"command": "hold", "params": "x1"', sent[-1])
+        self.assertEqual(events[-1], {"type": "state", "call_id": cid, "state": "held"})
+        b.feed(netstring(b'{"event":true,"class":"call","type":"CALL_CLOSED","id":"x1",'
+                         b'"param":"486 Busy Here,Q.850;cause=17"}'))
         self.assertEqual(events[-1], {"type": "ended", "call_id": cid, "reason": "busy"})
+        # an outgoing call is matched to baresip's id by CALL_OUTGOING; a failed dial ends it
+        b.dial("out1", "+16465550102")
+        self.assertIn(b'"command": "dial", "params": "+16465550102"', sent[-1])
+        b.feed(netstring(b'{"event":true,"class":"call","type":"CALL_OUTGOING","id":"y1","direction":"outgoing"}'))
+        self.assertEqual(b.ours["out1"], "y1")
+        b.hangup("out1", "normal")
+        self.assertIn(b'"command": "hangup", "params": "y1"', sent[-1])
+        b.feed(netstring(b'{"event":true,"class":"call","type":"CALL_CLOSED","id":"y1","param":"Rejected by user"}'))
+        self.assertEqual(events[-1], {"type": "ended", "call_id": "out1", "reason": "normal"})
+        b.dial("out2", "sip:nobody@127.0.0.1")
+        tok = sent[-1].split(b'"token": "')[1].split(b'"')[0]
+        b.feed(netstring(b'{"response":true,"ok":false,"data":"dial failed","token":"' + tok + b'"}'))
+        self.assertIn({"type": "ended", "call_id": "out2", "reason": "failed"}, events)
         b.sock = None
+
+    def test_close_reasons(self):
+        from omarchy_phone.backends.baresip import close_reason
+        for param, want in (("486 Busy Here,Q.850;cause=17", "busy"), ("503 Service Unavailable,Q.850;cause=21",
+                            "rejected"), ("603 Decline", "rejected"), ("408 Request Timeout", "no_answer"),
+                            ("404 Not Found", "failed"), ("Connection reset by peer [104]", "normal")):
+            self.assertEqual(close_reason(param, False), want, param)
+        self.assertEqual(close_reason("Busy", True), "normal")
 
 
 if __name__ == "__main__":
