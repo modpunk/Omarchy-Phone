@@ -63,7 +63,9 @@ PanelWindow {
   readonly property int cellW: Math.floor((width - 2 * Theme.pad) / cols)
   readonly property int cellH: Theme.iconSize + Theme.px(30)
   readonly property int gridTop: header.y + header.height + Theme.px(22)
-  readonly property int gridBottom: height - Theme.navH - dockBox.height - Theme.px(28)
+  // Room for the Omarchy Phone logo between the app grid and the dock.
+  readonly property int logoH: Theme.px(40)
+  readonly property int gridBottom: height - Theme.navH - dockBox.height - Theme.px(28) - logoH - Theme.px(16)
   readonly property int rows: Math.max(1, Math.floor((gridBottom - gridTop) / cellH))
   readonly property int perPage: rows * cols
 
@@ -135,6 +137,20 @@ PanelWindow {
         color: Theme.foreground; opacity: index === pages.currentIndex ? 0.9 : 0.3
       }
     }
+  }
+
+  // Omarchy Phone logo (mark, wordmark and "Vox Libertatis"), centred in the
+  // gap between the app grid and the dock.
+  Image {
+    id: brandLogo
+    anchors.horizontalCenter: parent.horizontalCenter
+    y: Math.round((pages.y + pages.height + Theme.px(12) + dockBox.y) / 2 - height / 2)
+    width: Math.round(parent.width * 0.62); height: home.logoH
+    source: Qt.resolvedUrl("../assets/omarchy-phone-logo.svg")
+    sourceSize.width: width; sourceSize.height: height
+    fillMode: Image.PreserveAspectFit
+    smooth: true
+    opacity: 0.9
   }
 
   Rectangle {
