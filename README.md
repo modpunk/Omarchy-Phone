@@ -1,5 +1,7 @@
 # Omarchy Phone
 
+*Vox Libertatis*
+
 Omarchy (opinionated Arch Linux + Hyprland) adapted for small form factor devices: smartphones.
 
 - `shell/` — the phone shell for Hyprland (home screen, status bar, pull-down, app switcher, lock).
