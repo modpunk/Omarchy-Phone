@@ -1,0 +1,25 @@
+name: brand
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - brand/**
+      - .github/workflows/brand.yml
+      - .github/scripts/check-brand.py
+  pull_request:
+    paths:
+      - brand/**
+      - .github/workflows/brand.yml
+      - .github/scripts/check-brand.py
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    name: SVG validity + PNG sizes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate brand assets
+        run: python3 .github/scripts/check-brand.py

@@ -1,0 +1,29 @@
+name: guard
+
+# Intentionally no path filter: secrets or a stray firmware/binary blob can
+# land in any part of the tree, so this always runs.
+on:
+  push:
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  secrets-and-binaries:
+    name: secrets + firmware/binary guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Block committed firmware, keys and oversized files
+        run: .github/scripts/check-binaries.sh
+
+      - name: Scan for secrets (gitleaks)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ver=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
+            | grep -m1 '"tag_name"' | sed -E 's/.*"v?([0-9][^"]*)".*/\1/')
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${ver}/gitleaks_${ver}_linux_x64.tar.gz" \
+            | tar xz gitleaks
+          ./gitleaks detect --no-git --source . --redact -v

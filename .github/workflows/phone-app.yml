@@ -1,0 +1,42 @@
+name: phone-app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/phone/**
+      - .github/workflows/phone-app.yml
+  pull_request:
+    paths:
+      - apps/phone/**
+      - .github/workflows/phone-app.yml
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    name: unittest (Arch, headless D-Bus)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      # git must exist before actions/checkout runs *inside this container*.
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git python python-gobject gtk4 libadwaita dbus python-phonenumbers
+
+      - uses: actions/checkout@v4
+
+      - name: Run test suite
+        env:
+          # The docker-in-docker SIP end-to-end tests (tests/test_sip.py) need a
+          # real docker daemon to build tests/sipbed/; that isn't available
+          # inside this container, so skip that suite explicitly rather than
+          # rely on the test's own `shutil.which("docker")` autodetection.
+          OMARCHY_PHONE_SKIP_SIPBED: "1"
+        run: |
+          if [ ! -f apps/phone/scripts/test.sh ]; then
+            echo "apps/phone hasn't merged yet, nothing to test"
+            exit 0
+          fi
+          cd apps/phone
+          sh scripts/test.sh
