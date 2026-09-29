@@ -45,7 +45,7 @@ EVENT_STATES = {
 }
 # SIP status / Q.850 cause (as baresip reports them in CALL_CLOSED) -> our end reasons
 _BUSY = re.compile(r"\b(486|600)\b|busy|cause=17\b", re.I)
-_REJECTED = re.compile(r"\b(603|403|503)\b|declin|reject|cause=21\b", re.I)
+_REJECTED = re.compile(r"\b(603|403)\b|declin|reject|cause=21\b", re.I)  # Asterisk: 603 -> 503 cause=21
 _NO_ANSWER = re.compile(r"\b(408|480|487)\b|timeout|cause=(18|19)\b", re.I)
 _FAILED = re.compile(r"\b(404|484|488|5\d\d)\b|cause=(1|3|28|38|127)\b", re.I)
 
@@ -112,6 +112,9 @@ class BaresipBackend(Backend):
         self.reinvite: dict[str, float] = {}   # our re-INVITE in flight since (monotonic)
         self._watch = 0
         self._retry = 0
+
+    def owns(self, address):
+        return not address.startswith("loop:")  # loopback peers belong to the loopback backend
 
     # ------------------------------------------------------------ connection
     def start(self, emit):
