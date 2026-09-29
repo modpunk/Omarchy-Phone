@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
     "dnd": False,
     "dnd_action": "silent",          # silent | voicemail | reject
     "dnd_repeat_callers": True,
+    "dnd_allowed_groups": [],
     "unknown_action": "ring",        # ring | silent | voicemail | reject
     "withheld_action": "voicemail",
     "spam_action": "voicemail",
