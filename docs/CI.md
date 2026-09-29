@@ -55,11 +55,16 @@ scope here.
   chunk) match what its filename promises, per the mapping in `brand/tools/render.sh`:
   `icon-N.png` → N×N, `name-WxH.png` → W×H, `name-W.png` → width W (any height, e.g.
   `logo-dark-1600.png`).
+- for PNGs whose source SVG is identifiable from that same mapping (`icon-*` ← `mark-dark.svg`,
+  `logo-X-N` ← `logo-X.svg`, `social-preview-*` ← `social-preview.svg`), the PNG's height is also
+  cross-checked against the source's `viewBox` aspect ratio (±1px for rsvg-convert's own
+  rounding) — so a PNG that's the right size for its *filename* but wasn't re-rendered after the
+  source SVG's proportions changed still fails.
 
-**After brand changes land** (new icon sizes, a re-render): if a new PNG doesn't fit one of those
-three filename patterns, the script prints a "skip (no naming convention matched)" line instead of
-silently passing — decide then whether the convention needs extending or the file needs
-renaming.
+**After brand changes land** (new icon sizes, a re-render): if a new PNG doesn't fit one of the
+three filename patterns, or its source SVG isn't at the expected sibling path, the script prints a
+"skip"/"no source SVG found" line instead of silently passing — decide then whether the convention
+needs extending or the file needs renaming.
 
 ## guard.yml — whole repo, no path filter
 
@@ -82,16 +87,15 @@ fixture credentials, which are test-only dummy values and didn't trip any rule. 
 fixture does trip gitleaks, add a `.gitleaksignore` (path-based) or a `.github/gitleaks.toml`
 allowlist rather than disabling the job.
 
-## What's not verified in a container (and why)
+## Known follow-ups
 
-Docker's own outbound network in the sandbox this CI was built in intermittently fails to resolve
-`registry-1.docker.io` over IPv6 (`connect: network is unreachable` — no global IPv6 route on that
-host). A `docker pull archlinux:latest` eventually succeeded on a retry, and once it did, the exact
-`phone-app.yml` and `shell.yml` job commands were run inside that fresh container against the
-merged (`shell` + `phone-app`) tree end to end: `sh scripts/test.sh` (55 ran, 6 skipped, all
-passed), `qmllint` (exit 0), and `Hyprland --verify-config --i-am-really-stupid` for all three
-device profiles (all "config ok"). That container run is what caught the root-privileges flag
-`shell.yml` needed — running the same commands directly on the (non-root) host would not have.
-`brand.yml` and `guard.yml` don't need a container (`ubuntu-latest` + stdlib/gitleaks) and were run
-directly. None of this is GitHub Actions' own network or runner image — a real Actions run may
-still behave differently; watch the first few runs after this merges.
+- `archlinux:latest`'s keyring can go stale between CI runs; if `pacman -Syu` ever starts failing
+  on package signatures, prepend `pacman -Sy --noconfirm archlinux-keyring` to the install step.
+- `check-binaries.sh`'s `.env*` name pattern would also flag a legitimate `.env.example` /
+  `.env.sample` — exclude those specifically if one ever needs to be committed.
+- `guard.yml` has no path filter, so on a same-repo PR it runs once for the push and once for the
+  PR event; harmless, just two check runs instead of one.
+- these are path-filtered workflows, which GitHub *skips* (not "passes") when nothing in their
+  path changed — fine as informational checks, but if any of the four ever becomes a required
+  status check, it needs a `dorny/paths-filter`-style single workflow instead so there's always a
+  result to require.
