@@ -1,6 +1,10 @@
 # Omarchy Phone brand
 
-![Omarchy Phone: Vox Libertatis](png/logo-dark-1600.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="logo-light.svg">
+  <img alt="Omarchy Phone: Vox Libertatis" src="logo-light.svg" width="720">
+</picture>
 
 ## Concept
 
@@ -46,7 +50,7 @@ line back to the pixel grid.
 | `social-preview.svg` | 1280×640 stacked lockup on the Tokyo Night background |
 | `png/icon-{48,64,128,256,512,1024}.png` | Launcher / app icons: the mark in Omarchy green on transparent, edge to edge, the same way Omarchy ships `icon.png` |
 | `png/social-preview-1280x640.png` | GitHub social preview (Settings → General → Social preview) |
-| `png/logo-{light,dark}-1600.png` | Raster lockups for places that do not take SVG |
+| `png/logo-{light,dark}-1600.png` | Raster lockups on a transparent background for places that do not take SVG (`-dark` goes on dark backgrounds only) |
 | `tools/build.py` | Generates every SVG from the pixel bitmaps and the Cinzel outlines |
 | `tools/render.sh` | Renders the PNGs with `rsvg-convert` |
 
