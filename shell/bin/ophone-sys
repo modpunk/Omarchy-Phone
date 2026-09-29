@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# System actions for the Omarchy Phone shell. One place to adapt per device.
+#   ophone-sys wifi on|off | bluetooth on|off | airplane on|off
+#   ophone-sys volume <0-100> | silent on|off | brightness <1-100>
+#   ophone-sys flashlight on|off | rotation-lock on|off
+#   ophone-sys reboot | poweroff | suspend
+# With OPHONE_DRY_RUN=1 (the desktop preview) it only prints what it would do.
+set -uo pipefail
+run() {
+  if [[ "${OPHONE_DRY_RUN:-}" == 1 ]]; then echo "ophone-sys (dry run): $*" >&2; return 0; fi
+  "$@"
+}
+state="${XDG_RUNTIME_DIR:-/tmp}/omarchy-phone"; mkdir -p "$state"
+onoff() { [[ "$1" == on ]] && echo "$2" || echo "$3"; }
+case "${1:-}" in
+  wifi)          run nmcli radio wifi "$(onoff "$2" on off)" ;;
+  bluetooth)     run bluetoothctl power "$(onoff "$2" on off)" ;;
+  airplane)      run nmcli radio all "$(onoff "$2" off on)"; run rfkill "$(onoff "$2" block unblock)" bluetooth ;;
+  volume)        run wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ "$2%" ;;
+  silent)        echo "$2" >"$state/silent"   # apps read this to decide whether to ring/buzz
+                 run wpctl set-mute @DEFAULT_AUDIO_SINK@ "$(onoff "$2" 1 0)" ;;
+  brightness)    run brightnessctl -q set "$2%" ;;
+  flashlight)    led="$(ls -d /sys/class/leds/*flash* /sys/class/leds/*torch* 2>/dev/null | head -1)"
+                 [[ -n "$led" ]] && run brightnessctl -q -d "$(basename "$led")" set "$(onoff "$2" 100% 0)" ;;
+  rotation-lock) echo "$2" >"$state/rotation-lock" ;;
+  reboot)        run systemctl reboot ;;
+  poweroff)      run systemctl poweroff ;;
+  suspend)       run systemctl suspend ;;
+  *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

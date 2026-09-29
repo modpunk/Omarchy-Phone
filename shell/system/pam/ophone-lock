@@ -1,0 +1,5 @@
+#%PAM-1.0
+# /etc/pam.d/ophone-lock: the phone lock screen's PIN check.
+# v1: the PIN is the user's password (make it numeric to use the PIN pad).
+auth      include   login
+account   include   login
