@@ -121,15 +121,21 @@ importable/exportable as vCard 3.0/4.0 files; vCard is the interchange format, S
 
 ### 3.2 Shell integration
 
-`docs/shell/INTEGRATION.md` (owned by the shell) did not exist when v0.1 was written, so the phone app
-is self-contained and uses only freedesktop standards:
+The shell (`docs/shell/INTEGRATION.md`) is the notification server and needs nothing phone-specific
+beyond freedesktop notifications:
 
-- Incoming call → `org.freedesktop.Notifications.Notify` with `category=call.incoming`,
-  `urgency=critical`, `resident=true`, actions `answer`, `decline`, `voicemail`, plus the full-screen
-  incoming window from the UI. Missed call → a normal notification with a `callback` action.
-- The daemon emits `Event` signals (`incoming`, `state`, `ended`, `dnd`) that a shell can subscribe to
-  for a status-bar call pill or lock-screen answer UI. See `docs/phone/API.md` → "Shell hooks".
-- When the shell publishes its own hooks, the Notifier class is the only place to change.
+- Ringing call → `category=call.incoming`, `urgency=critical`, `resident=true`, actions `accept`,
+  `decline`, `silence` (plus `voicemail`), hints `x-ophone-caller` / `x-ophone-number` /
+  `x-ophone-video`. The shell turns it into a full-screen call surface that also works over the lock
+  screen. On any other notification server phoned also opens the app's own incoming page.
+- Connected call → one resident `category=call` notification, shown by the shell as the status-bar
+  call pill; its `default` action brings the in-call page forward.
+- Silenced (screened) calls use `category=call.silenced` so they never take over the screen; missed
+  and screened calls use `call.unanswered` with "Call back" / "Always allow".
+- The app plays the ringtone and skips it when the shell's silent switch is on
+  (`$XDG_RUNTIME_DIR/omarchy-phone/silent`).
+- The daemon's `Event` signals (`incoming`, `call`, `ended`, `dnd`, …) are available to the shell or
+  scripts. See `docs/phone/API.md` → "Shell hooks". All of this lives in `notify.py`.
 
 ## 4. Number handling
 
@@ -242,14 +248,27 @@ Screens (bottom tab bar):
 
 ## 9. v0.1 scope and next steps
 
-Working in v0.1: daemon + D-Bus API, loopback backend across multiple local instances, contacts with
-vCard import/export, favorites, groups, call log, screening engine with DND/block/allow/unknown/spam,
-number detection and tap-to-call, copy/paste, in-call controls (mute, hold, speaker/BT routing, video
-flag, merge into group call), notifications, and the phone-size UI.
+Working in v0.1 (on this laptop, loopback backend): daemon + D-Bus API + CLI; calls between local
+instances with ringing, answer, decline, voicemail diversion, hold/resume, mute, DTMF, voice↔video
+switching (signalled; no media yet), merge into a group call and split/leave; contacts with vCard
+2.1/3.0/4.0 import and 3.0/4.0 export, favorites and groups; call log with screening reasons;
+screening engine (block/allow/spam lists with patterns, unknown/withheld/spam policies, neighbour
+spoofing, DND with favorites, allowed groups and repeat callers); number detection with tap-to-call,
+paste and opt-in clipboard detection; PipeWire route listing/switching incl. Bluetooth sinks;
+notifications per the shell contract; the phone-size UI (screenshots in `docs/phone/screenshots/`).
+
+Not done yet: real media (no RTP elements in this GStreamer install), the baresip backend against a
+real baresip, voicemail recording/playback, video rendering, SIP account setup UI (credentials via
+libsecret), MatrixRTC.
 
 Next steps, in order:
 
-1. baresip backend against a local Asterisk in a container (loopback SIP, no external accounts).
-2. Media on the loopback backend (opus over UDP via GStreamer once `gst-plugins-good` is available).
-3. Voicemail store and playback; video rendering; MatrixRTC backend.
-4. Adopt the shell's incoming-call and DND hooks from `docs/shell/INTEGRATION.md`.
+1. Run the baresip backend against a local Asterisk in a container (loopback SIP, no external
+   accounts); fix command-name differences in `backends/baresip.py:COMMANDS`.
+2. SIP account page (server, user, libsecret password, TLS/SRTP policy) that writes baresip's config.
+3. Media on the loopback backend (opus over UDP via GStreamer once `gst-plugins-good` is installed),
+   so audio routing and mute can be tested end to end.
+4. Voicemail store and playback; video preview/rendering via `pipewiresrc` and a GTK paintable sink.
+5. Measure on the iPhone 6s (idle CPU of phoned, UI start time under `GSK_RENDERER=cairo`); consider
+   keeping the UI resident.
+6. MatrixRTC backend.
