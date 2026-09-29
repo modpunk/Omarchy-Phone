@@ -79,14 +79,14 @@ class PhoneService:
     def broadcast(self, event: dict):
         if event.get("type") == "ended":
             GLib.idle_add(lambda: self.broadcast({"type": "history"}) and False)
-        if event.get("type") == "incoming":
-            self._ensure_ui(event["call"]["id"])
+        if event.get("type") == "incoming" and not self.notifier.shell_present():
+            self._ensure_ui(event["call"]["id"])  # the phone shell draws its own call surface
         if self.conn:
             self.conn.emit_signal(None, OBJECT_PATH, IFACE, "Event", GLib.Variant("(s)", (json.dumps(event),)))
 
     def _on_notification(self, key, action):
-        if action in ("default", "callback") or (action == "answer"):
-            self._ensure_ui(key if not key.startswith(("missed:", "screened:")) else None)
+        if action in ("default", "callback", "accept", "answer"):
+            self._ensure_ui()  # bring the window up (in-call page once answered)
         self.mgr.notification_action(key, action)
 
     def _ensure_ui(self, call_id=None):
@@ -305,8 +305,9 @@ def main(argv=None):
     def on_bus(conn, _name):
         svc.export(conn)
 
-    def on_lost(_conn, name):
-        print(f"phoned: could not own {name} (already running?)", file=sys.stderr)
+    def on_lost(conn, name):
+        if conn is not None and svc.conn is None:
+            print(f"phoned: could not own {name} (already running?)", file=sys.stderr)
         loop.quit()
 
     Gio.bus_own_name(Gio.BusType.SESSION, bus_name(args.profile), Gio.BusNameOwnerFlags.NONE,

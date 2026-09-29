@@ -92,7 +92,19 @@ class AudioRouter:
         self.current = None
 
     # ------------------------------------------------------------ ringtone
+    @staticmethod
+    def silent_mode() -> bool:
+        """The shell's ring/silent switch ($XDG_RUNTIME_DIR/omarchy-phone/silent)."""
+        path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "omarchy-phone", "silent")
+        try:
+            with open(path) as f:
+                return f.read().strip() == "on"
+        except OSError:
+            return False
+
     def ring(self, on: bool):
+        if on and self.silent_mode():
+            return
         if on and self._ring is None and not os.environ.get("OMARCHY_PHONE_QUIET") and os.path.exists(RINGTONE):
             try:
                 # loop the ringtone until stopped; pw-play exits after one pass so use a tiny shell loop

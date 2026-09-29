@@ -63,6 +63,8 @@ class CallManager:
         self.emit({"type": kind, "call": call.to_dict()})
 
     def _who(self, remote: str) -> tuple[str, int | None]:
+        if remote == "loop:echo":
+            return "Echo test", None
         c = self.store.contact_for_number(remote)
         if c:
             return c.display_name(), c.id
@@ -104,6 +106,8 @@ class CallManager:
         if not addr:
             raise ValueError(f"not a callable number or address: {address!r}")
         backend = self._backend_for(addr)
+        if addr.startswith("loop:") and hasattr(backend, "number_for"):
+            addr = backend.number_for(addr)
         name, cid = self._who(addr)
         call = Call(id=uuid.uuid4().hex[:12], remote=addr, name=name, direction="out", backend=backend.id,
                     video=video and backend.can("video"), contact_id=cid)
@@ -254,6 +258,9 @@ class CallManager:
             if st == "active" and call.answered is None:
                 call.answered = time.time()
                 self.store.update_call(call.id, answered=call.answered, status="answered")
+                if self.notifier:
+                    self.notifier.close(call.id)
+                    self.notifier.ongoing(call.id, call.name)
             if st in ("held", "active") and call.state != "incoming":
                 call.held = st == "held"
             if call.state == "incoming" and st in ("ringing", "dialing"):
@@ -303,8 +310,11 @@ class CallManager:
                     backend=backend.id, state="incoming", video=bool(ev.get("video")),
                     screening=decision.to_dict(), contact_id=cid, silent=decision.action == screening.SILENT)
         self.calls[call.id] = call
+        # the log shows why a call was screened (or broke through DND), not routine "contact" rings
+        logged_reason = decision.reason if decision.action != screening.RING or decision.rule.startswith(
+            ("dnd:", "allow:")) else ""
         self.store.log_call(call_id=call.id, remote=remote, name=call.name, direction="in",
-                            started=call.started, status="ringing", reason=decision.reason,
+                            started=call.started, status="ringing", reason=logged_reason,
                             video=int(call.video), backend=backend.id)
         if decision.action == screening.REJECT:
             call.screening["user"] = "blocked"
@@ -318,8 +328,10 @@ class CallManager:
         if self.audio and not call.silent and not busy:
             self.audio.ring(True)
         if self.notifier:
-            self.notifier.incoming(call.id, call.name, decision.reason or (
-                "Call waiting" if busy else ""), silent=call.silent)
+            number = call.to_dict()["display"] if call.remote else "Number withheld"
+            self.notifier.incoming(call.id, call.name, "" if number == call.name else number,
+                                   decision.reason or ("Call waiting" if busy else ""),
+                                   video=call.video, silent=call.silent)
         self._publish(call, "incoming")
 
     def _end(self, call: Call, reason: str, detail: str = ""):
@@ -344,6 +356,7 @@ class CallManager:
         self.store.update_call(call.id, ended=time.time(), status=status)
         if self.notifier:
             self.notifier.close(call.id)
+            self.notifier.close("ongoing:" + call.id)
             if status == "missed" and not call.silent:
                 self.notifier.missed(call.remote, call.name)
             elif status in ("missed", "voicemail", "blocked") and call.screening.get("reason"):
@@ -376,8 +389,14 @@ class CallManager:
                 elif action == "default":
                     self.emit({"type": "show", "page": "recents"})
                 return
-            if action == "answer":
+            if key.startswith("ongoing:"):
+                self.emit({"type": "show", "page": "incall", "call_id": key.split(":", 1)[1]})
+                return
+            if action in ("accept", "answer"):
                 self.answer(key)
+            elif action == "silence":
+                if self.audio:
+                    self.audio.ring(False)
             elif action == "decline":
                 self.decline(key)
             elif action == "voicemail":

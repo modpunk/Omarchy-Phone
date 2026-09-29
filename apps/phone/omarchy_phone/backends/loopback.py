@@ -103,6 +103,13 @@ class LoopbackBackend(Backend):
                 return ("127.0.0.1", int(info["port"]))
         return None
 
+    def number_for(self, address: str) -> str:
+        """The registered number behind `loop:<profile>`, so contacts match; else the address."""
+        for info in self.directory():
+            if address == f"loop:{info['profile']}" and info.get("number"):
+                return info["number"]
+        return address
+
     def owns(self, address: str) -> bool:
         return address == ECHO or address.startswith("loop:") or self._resolve(address) is not None
 
