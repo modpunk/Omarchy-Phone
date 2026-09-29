@@ -13,8 +13,10 @@ PanelWindow {
   WlrLayershell.layer: WlrLayer.Overlay
   WlrLayershell.namespace: "ophone-call"
   color: Theme.background
+  WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
   Loader {
     anchors.fill: parent
+    focus: true
     active: parent.visible
     sourceComponent: CallCard { call: Notifs.incomingCall }
   }

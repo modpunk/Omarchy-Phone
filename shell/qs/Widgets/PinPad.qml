@@ -9,6 +9,10 @@ Item {
   property string status: ""
   property bool busy: false
   signal keyPressed(string k)
+  // Key lit by the hardware keyboard, briefly, so typed digits show on the pad.
+  property string lit: ""
+  function flash(k) { lit = k; litTimer.restart() }
+  Timer { id: litTimer; interval: 250; onTriggered: root.lit = "" }
   implicitWidth: grid.width; implicitHeight: col.implicitHeight
 
   function press(k) { if (!busy) keyPressed(k) }
@@ -40,7 +44,7 @@ Item {
         delegate: Rectangle {
           required property string modelData
           width: Theme.px(70); height: width; radius: width / 2
-          color: tap.pressed ? Theme.surfaceHi : (modelData.length === 1 ? Theme.alpha(Theme.surface, 0.8) : "transparent")
+          color: tap.pressed || root.lit === modelData ? Theme.surfaceHi : (modelData.length === 1 ? Theme.alpha(Theme.surface, 0.8) : "transparent")
           Text {
             anchors.centerIn: parent
             text: parent.modelData === "del" ? "\u{f006e}" : parent.modelData === "ok" ? "\u{f012c}" : parent.modelData

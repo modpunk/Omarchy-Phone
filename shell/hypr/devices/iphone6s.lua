@@ -2,6 +2,10 @@
 -- Keys come from the SoC's gpio-keys as KEY_HOMEPAGE, KEY_POWER,
 -- KEY_VOLUMEUP, KEY_VOLUMEDOWN, KEY_MUTE (ring/silent switch). xkb maps
 -- these to the keysyms below.
+-- Touch doesn't work on the first boots yet, so a Bluetooth keyboard is the
+-- input: the SUPER binds in hyprland.lua cover every hardware key (SUPER+Esc
+-- is the power key, SUPER+Up/Down volume, SUPER+H home), and a keyboard's
+-- own media keys map to the same keysyms as the phone's buttons.
 return {
   monitors = {
     { output = "", mode = "750x1334@60", position = "0x0", scale = 2, transform = 0 },

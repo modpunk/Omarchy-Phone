@@ -30,7 +30,9 @@ ShellRoot {
   GlobalShortcut { appid: "ophone"; name: "volume-up"; description: "Volume up"; onPressed: Phone.volumeUp() }
   GlobalShortcut { appid: "ophone"; name: "volume-down"; description: "Volume down"; onPressed: Phone.volumeDown() }
   GlobalShortcut { appid: "ophone"; name: "mute"; description: "Ring/silent switch"; onPressed: Phone.toggleSilent() }
-  GlobalShortcut { appid: "ophone"; name: "switcher"; description: "App switcher"; onPressed: Phone.toggleSwitcher() }
+  GlobalShortcut { appid: "ophone"; name: "switcher"; description: "App switcher"; onPressed: { Phone.byKey = !Phone.switcherOpen; Phone.toggleSwitcher() } }
+  GlobalShortcut { appid: "ophone"; name: "shade"; description: "Notifications and quick settings"; onPressed: { Phone.byKey = Phone.shade === 0; Phone.toggleShade() } }
+  GlobalShortcut { appid: "ophone"; name: "power-menu"; description: "Power menu"; onPressed: { Phone.byKey = !Phone.powerMenuOpen; Phone.togglePowerMenu() } }
   GlobalShortcut { appid: "ophone"; name: "lock"; description: "Lock"; onPressed: Phone.lock() }
   GlobalShortcut { appid: "ophone"; name: "keyboard"; description: "On-screen keyboard"; onPressed: Phone.keyboardOpen = !Phone.keyboardOpen }
 

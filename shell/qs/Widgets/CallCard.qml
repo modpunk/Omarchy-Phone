@@ -6,11 +6,27 @@ import qs.Services
 
 // Incoming call, full screen. Used both as its own overlay and inside the
 // lock screen, so a call can be answered without unlocking.
+// Keyboard: Enter or A answers, Esc or D declines; Left/Right picks a
+// button (focus ring) and Enter/Space presses it.
 Rectangle {
   id: root
   required property var call        // a Notification with category call.incoming
   property bool onLockScreen: false
   color: Theme.background
+
+  property int sel: -1               // 0 = Decline, 1 = Accept, -1 = none (Enter answers)
+  focus: true
+  Component.onCompleted: forceActiveFocus()
+  Keys.onPressed: ev => {
+    const k = Phone.keyOf(ev)
+    if (k === Qt.Key_Left) sel = 0
+    else if (k === Qt.Key_Right) sel = 1
+    else if (k === Qt.Key_Tab || k === Qt.Key_Backtab) sel = sel === 1 ? 0 : 1
+    else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) { if (sel === 0) Notifs.decline(); else Notifs.answer() }
+    else if (k === Qt.Key_A || k === Qt.Key_Y) Notifs.answer()
+    else if (k === Qt.Key_Escape || k === Qt.Key_D || k === Qt.Key_N) Notifs.decline()
+    ev.accepted = true
+  }
 
   readonly property string caller: (call && (call.hints["x-ophone-caller"] || call.summary)) || "Unknown caller"
   readonly property string detail: (call && (call.hints["x-ophone-number"] || call.body)) || ""
@@ -53,13 +69,13 @@ Rectangle {
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom; anchors.bottomMargin: Theme.navH + Theme.px(60)
     spacing: Theme.px(90)
-    RoundButton { glyph: "\u{f03f5}"; caption: "Decline"; fill: Theme.urgent; ink: "white"; diameter: 72; onClicked: Notifs.decline() }
-    RoundButton { glyph: root.video ? "\u{f0567}" : "\u{f03f2}"; caption: "Accept"; fill: Theme.good; ink: "white"; diameter: 72; onClicked: Notifs.answer() }
+    RoundButton { glyph: "\u{f03f5}"; caption: "Decline"; focused: root.sel === 0; fill: Theme.urgent; ink: "white"; diameter: 72; onClicked: Notifs.decline() }
+    RoundButton { glyph: root.video ? "\u{f0567}" : "\u{f03f2}"; caption: "Accept"; focused: root.sel === 1; fill: Theme.good; ink: "white"; diameter: 72; onClicked: Notifs.answer() }
   }
   Label {
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom; anchors.bottomMargin: Theme.navH + Theme.px(24)
-    text: (root.onLockScreen ? "\u{f033e}  Answering keeps the phone locked · " : "") + "Vol\u2212 silences"
+    text: (root.onLockScreen ? "\u{f033e}  Answering keeps the phone locked · " : "") + "Vol\u2212 silences · Enter answers · Esc declines"
     font.family: Theme.fontFamily
     size: 11; color: Theme.dim
   }

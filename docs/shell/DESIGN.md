@@ -16,7 +16,7 @@ shell hard-codes that size. Everything scales from the screen's logical width.
 |---|---|
 | Software rendering only (no GPU) | `QT_QUICK_BACKEND=software`: no shaders, `MultiEffect`, `layer.effect`, blur or drop shadows. Hyprland blur, shadows and rounding are off, and only fade/slide animations run. |
 | 2 cores, 2 GB RAM | One QuickShell process for every shell surface. Panels are `Loader`s that unload when closed, hidden surfaces use `visible: false` (not opacity 0), no polling timers faster than 1 s, and screenshots in the switcher are captured once, not live. |
-| Touch first, no mouse or keyboard | Every control is at least 44 logical px. Gestures come from the shell's own edge strips, so no Hyprland plugin (hyprgrass) is needed. |
+| Touch first, keyboard complete | Every control is at least 44 logical px. Gestures come from the shell's own edge strips, so no Hyprland plugin (hyprgrass) is needed. Every surface can also be driven from a (Bluetooth) keyboard, because the first iPhone 6s boots have no working touchscreen (see [Keyboard](#keyboard)). |
 | Five hardware keys | Home, Power, Vol+, Vol-, Mute are all Hyprland binds that call the shell's IPC, so the shell owns the behaviour and the binds also work on the lock screen (`locked = true`). |
 | Many phones, not one | `Theme.u` = logical width / 375. Every size is `n * Theme.u`. Device quirks (panel mode, scale, touch transform, key names) live in `shell/hypr/devices/<device>.lua`. |
 
@@ -88,6 +88,56 @@ touches in the middle of the screen always go to the app:
 
 On the phone, logind must not act on the power key
 (`shell/system/logind-ophone.conf`: `HandlePowerKey=ignore`), so Hyprland sees it.
+
+### Keyboard
+
+The first iPhone 6s boots have no working touchscreen, so a Bluetooth keyboard
+is the input, and every surface works without touch. Touch behaviour is
+unchanged: the focus ring appears only once a key has moved it, and a tap
+clears it.
+
+Two layers handle keys:
+
+* **Hyprland binds** (`shell/hypr/hyprland.lua`, SUPER + key) reach the shell
+  from anywhere, including from inside an app. They dispatch the same
+  `ophone:*` global shortcuts as the hardware keys, and the power, volume and
+  mute binds also work on the lock screen (`locked = true`). A keyboard's own
+  media keys (`XF86AudioRaiseVolume`, `XF86PowerOff`, ...) are the same
+  keysyms as the phone's buttons, so they just work.
+* **Plain keys** go to whichever shell surface is showing. Overlays (shade,
+  switcher, power menu, incoming call) take exclusive keyboard focus while
+  they are open. The home screen takes it only while the empty home
+  workspace is showing and no overlay is open, so an app always keeps its
+  keys. The lock screen gets them through ext-session-lock.
+
+| Keys (anywhere) | Action |
+|---|---|
+| `SUPER+H` | home (closes the shade/switcher first) |
+| `SUPER+Tab` | app switcher (again to close) |
+| `SUPER+N` | pull-down shade (again to close) |
+| `SUPER+L` | lock |
+| `SUPER+Esc` | the power key: tap = lock and screen off, or wake the screen; hold = power menu. Works locked. |
+| `SUPER+Shift+Esc` | power menu. Works locked. |
+| `SUPER+Up` / `SUPER+Down` | volume ±5% with OSD, repeats while held; Down silences a ringing call. Works locked. |
+| `SUPER+M` | silent mode. Works locked. |
+| `SUPER+Left` / `SUPER+Right` | previous / next app |
+| `SUPER+K` | on-screen keyboard |
+| `SUPER+Return`, `SUPER+W` | terminal, close the focused app |
+
+| Surface | Keys |
+|---|---|
+| Home | Arrows move the ring over the grid; Down from the bottom row enters the dock, Up leaves it. Tab / Shift+Tab walk grid then dock. Home/End jump to the first/last. PageDown/PageUp flip pages. Enter launches. Typing filters apps by name (prefix matches first) and shows a search chip in place of the date; Enter launches the ringed match, Backspace edits, Esc clears the search (then the ring). |
+| Shade | Arrows/Tab move over the 8 tiles, the brightness bar and the notifications. Enter/Space toggles a tile or opens a notification. Left/Right on the bar sets brightness ±10%. Delete (or Backspace) dismisses a notification, Shift+Delete clears all. Esc closes. |
+| Switcher | Left/Right (or Tab) selects a card, Home/End the first/last. Enter/Space switches to it. Delete closes that app, Shift+Delete closes all. Esc goes back. |
+| Power menu | Arrows/Tab select, Enter/Space activates, Esc cancels. |
+| Lock screen | Any key shows the PIN pad. Digits (top row or keypad) type the PIN and light the matching pad key, Backspace deletes, Enter unlocks, Esc hides the pad. |
+| Incoming call (unlocked or over the lock) | Enter or A answers, Esc or D declines. Left/Right ring Decline/Accept, then Enter/Space presses the ringed one. |
+
+When a surface is opened with its shortcut (`SUPER+Tab`, `SUPER+N`,
+`SUPER+Shift+Esc`), it opens with the ring on its first item; opened by
+touch, it shows no ring until a key is pressed. The ring is one accent
+`Rectangle` outline (`Widgets/FocusRing.qml`) with no animation; page flips
+reuse the page `ListView`'s own move (160 ms).
 
 ### Status bar
 
@@ -168,7 +218,11 @@ headless output is added instead, so nothing appears on the host desktop and the
 host's notifications are untouched. It runs the shell with
 `QT_QUICK_BACKEND=software`, drives a scenario through `qs ipc`, captures the
 headless output with `grim`, and kills everything by PID.
-`shell/preview/run.sh --hold` keeps it running. `source /tmp/oph-$UID/env`
+`shell/preview/run.sh --hold` keeps it running. The keyboard scenarios type
+into the preview with `wtype`, which only reaches the preview's own Wayland
+socket. Hyprland doesn't run binds for virtual keyboards, so those scenarios
+dispatch the same `ophone:*` global a SUPER bind would, and
+`hyprctl binds` shows the binds themselves. `source /tmp/oph-$UID/env`
 attaches another terminal (hyprctl, grim, notify-send, and `qs ipc` all reach
 the preview, never the host).
 
@@ -186,6 +240,20 @@ the preview, never the host).
 | osd | ![](screenshots/10-volume-osd.png) |
 | power | ![](screenshots/11-power-menu.png) |
 | lockcall | ![](screenshots/12-incoming-call-locked.png) |
+
+Keyboard scenarios (`run.sh keys` runs them all):
+
+| Scenario | Screenshot |
+|---|---|
+| kbhome: arrows on the grid | ![](screenshots/13-kb-home-focus.png) |
+| kbdock: Down into the dock | ![](screenshots/14-kb-dock-focus.png) |
+| kbsearch: typed "ma" | ![](screenshots/15-kb-search.png) |
+| kbshade: tiles | ![](screenshots/16-kb-shade-focus.png) |
+| kbnotif: down to a notification | ![](screenshots/17-kb-shade-notification.png) |
+| kbswitcher | ![](screenshots/18-kb-switcher-focus.png) |
+| kbpower | ![](screenshots/19-kb-power-focus.png) |
+| kbpin: digits typed on the keyboard | ![](screenshots/20-kb-lock-pin.png) |
+| kbcall: Right rings Accept | ![](screenshots/21-kb-call-focus.png) |
 
 ## Non-goals (v1) and next steps
 

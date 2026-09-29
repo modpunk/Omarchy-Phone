@@ -5,6 +5,8 @@
 #   shell/preview/run.sh --hold            start the session and wait (Ctrl-C to stop)
 #
 # Scenarios: home notification shade app keyboard switcher osd power lock pin call lockcall all
+# Keyboard scenarios (typed with wtype into the preview): kbhome kbdock kbsearch
+#   kbshade kbnotif kbswitcher kbpower kbpin kbcall, or "keys" for all of them
 #
 # Isolation: private XDG_RUNTIME_DIR (own Hyprland/Wayland/quickshell sockets),
 # private D-Bus session (the preview's notification daemon never touches the
@@ -83,6 +85,11 @@ ctl() { qs -p "$SHELL_DIR/qs" ipc call shell "$@" >/dev/null 2>&1; }
 for _ in $(seq 100); do ctl ping && break; sleep 0.2; done
 ctl ping || { echo "shell did not come up; see $LOG/qs.out" >&2; tail -30 "$LOG/qs.out" >&2; exit 1; }
 
+# Keys go to the preview only: wtype uses the preview's own WAYLAND_DISPLAY.
+key() { wtype "$@"; sleep 0.2; }
+# What a SUPER bind in hyprland.lua does (Hyprland doesn't run binds for
+# virtual keyboards like wtype, so the scenarios dispatch the same global).
+bind() { hyprctl dispatch "hl.dsp.global(\"ophone:$1\")" >/dev/null; sleep 0.4; }
 shot() { sleep "${2:-1.2}"; grim -o HEADLESS-1 "$OUT/$1.png"; echo "saved $OUT/$1.png"; }
 reset() { ctl reset; sleep 0.4; }
 term() { launch foot -D /tmp "$@" bash --noprofile --norc -c 'printf "\033[1mOmarchy Phone\033[0m  Vox Libertatis\n\n"; exec bash --noprofile --norc'; }
@@ -114,7 +121,17 @@ scenario() {
     lockcall)     reset; ctl lock; sleep 0.5; incoming_call; shot 12-incoming-call-locked ;;
     osd)          reset; ctl volumeUp; shot 10-volume-osd 0.5 ;;
     power)        reset; ctl powerMenu; shot 11-power-menu ;;
-    all)          for s in home notification shade app keyboard switcher osd power lock pin call lockcall; do scenario "$s"; done ;;
+    kbhome)       reset; key -k Right -k Down -k Right; shot 13-kb-home-focus 0.4 ;;
+    kbdock)       reset; key -k Right -k Down -k Down -k Down -k Down -k Down -k Down -k Right; shot 14-kb-dock-focus 0.4 ;;
+    kbsearch)     reset; key ma; shot 15-kb-search 0.6 ;;
+    kbshade)      reset; seed_notifications; sleep 0.5; bind shade; key -k Right -k Down; shot 16-kb-shade-focus 0.4 ;;
+    kbnotif)      reset; seed_notifications; sleep 0.5; bind shade; key -k Down -k Down -k Down; shot 17-kb-shade-notification 0.4 ;;
+    kbswitcher)   reset; term; sleep 1.5; term --title "Notes"; sleep 1.5; bind switcher; key -k Right -k Left; shot 18-kb-switcher-focus 1.2 ;;
+    kbpower)      reset; bind power-menu; key -k Down; shot 19-kb-power-focus 0.4 ;;
+    kbpin)        reset; ctl lock; sleep 0.8; key 1; key 2; wtype 3; shot 20-kb-lock-pin 0 ;;
+    kbcall)       reset; incoming_call; sleep 0.8; key -k Right; shot 21-kb-call-focus 0.4 ;;
+    keys)         for s in kbhome kbdock kbsearch kbshade kbnotif kbswitcher kbpower kbpin kbcall; do scenario "$s"; done ;;
+    all)          for s in home notification shade app keyboard switcher osd power lock pin call lockcall keys; do scenario "$s"; done ;;
     *) echo "unknown scenario: $1" >&2; return 1 ;;
   esac
 }

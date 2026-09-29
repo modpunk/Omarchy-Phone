@@ -11,6 +11,7 @@ Item {
   property real diameter: 64
   property real glyphSize: 26
   property real glyphRotation: 0
+  property bool focused: false      // keyboard focus ring
   signal clicked()
   implicitWidth: Theme.px(diameter)
   implicitHeight: Theme.px(diameter) + (caption ? Theme.px(22) : 0)
@@ -20,6 +21,7 @@ Item {
     width: Theme.px(root.diameter); height: width; radius: width / 2
     anchors.horizontalCenter: parent.horizontalCenter
     color: tap.pressed ? Qt.lighter(root.fill, 1.3) : root.fill
+    FocusRing { shown: root.focused }
     Glyph { anchors.centerIn: parent; text: root.glyph; size: root.glyphSize; color: root.ink; rotation: root.glyphRotation }
   }
   Label {

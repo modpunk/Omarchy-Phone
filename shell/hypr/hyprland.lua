@@ -111,11 +111,24 @@ key(keys.volume_up or "XF86AudioRaiseVolume", "volume-up", { locked = true, repe
 key(keys.volume_down or "XF86AudioLowerVolume", "volume-down", { locked = true, repeating = true })
 key(keys.mute or "XF86AudioMute", "mute")
 
--- Laptop/desk fallbacks so the shell can be driven with a keyboard.
+-- Keyboard (a Bluetooth keyboard on a phone without working touch, or a desk
+-- keyboard). Media keys on the keyboard hit the hardware-key binds above.
+-- Inside shell surfaces the shell handles plain keys itself (arrows, Tab,
+-- Enter, Esc, PageUp/PageDown, typing); see docs/shell/DESIGN.md "Keyboard".
+local L = { locked = true }
+local LR = { locked = true, repeating = true }
 hl.bind("SUPER + H", hl.dsp.global("ophone:home"))
 hl.bind("SUPER + TAB", hl.dsp.global("ophone:switcher"))
+hl.bind("SUPER + N", hl.dsp.global("ophone:shade"))
 hl.bind("SUPER + L", hl.dsp.global("ophone:lock"))
 hl.bind("SUPER + K", hl.dsp.global("ophone:keyboard"))
+hl.bind("SUPER + ESCAPE", hl.dsp.global("ophone:power"), L)          -- the power key: tap = lock + screen off / wake, hold = menu
+hl.bind("SUPER + SHIFT + ESCAPE", hl.dsp.global("ophone:power-menu"), L)
+hl.bind("SUPER + UP", hl.dsp.global("ophone:volume-up"), LR)
+hl.bind("SUPER + DOWN", hl.dsp.global("ophone:volume-down"), LR)    -- also silences a ringing call
+hl.bind("SUPER + M", hl.dsp.global("ophone:mute"), L)
+hl.bind("SUPER + LEFT", hl.dsp.focus({ direction = "l" }))
+hl.bind("SUPER + RIGHT", hl.dsp.focus({ direction = "r" }))
 hl.bind("SUPER + RETURN", hl.dsp.exec_cmd(device.terminal or "foot"))
 hl.bind("SUPER + W", hl.dsp.window.close())
 

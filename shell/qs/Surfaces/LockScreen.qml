@@ -11,6 +11,9 @@ import qs.Widgets
 // PAM service: /etc/pam.d/ophone-lock (shell/system/pam/ophone-lock), else
 // "login". In the preview (OPHONE_DRY_RUN=1) PAM is never called: any PIN of
 // four or more digits unlocks.
+// Keyboard: any key shows the PIN pad; digits (top row or keypad) type the
+// PIN, Backspace deletes, Enter unlocks, Esc hides the pad. An incoming call
+// takes the keys first (Enter/A answers, Esc/D declines).
 WlSessionLock {
   id: lock
   locked: Phone.locked
@@ -46,6 +49,27 @@ WlSessionLock {
 
   WlSessionLockSurface {
     color: Theme.background
+
+    Item {
+      id: lockKeys
+      anchors.fill: parent
+      focus: true
+      Keys.onPressed: ev => {
+        ev.accepted = true
+        if (!Phone.screenOn || lock.busy) return
+        const k = ev.key
+        if (k >= Qt.Key_0 && k <= Qt.Key_9) {
+          const d = String(k - Qt.Key_0)
+          Phone.pinVisible = true; lock.key(d); pad.flash(d)
+        } else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) {
+          if (Phone.pinVisible) { lock.key("del"); pad.flash("del") }
+        } else if (k === Qt.Key_Return || k === Qt.Key_Enter) {
+          if (Phone.pinVisible) { lock.key("ok"); pad.flash("ok") } else Phone.pinVisible = true
+        } else if (k === Qt.Key_Escape) {
+          Phone.pinVisible = false; lock.pin = ""; lock.status = ""
+        } else if (!(ev.modifiers & Qt.MetaModifier)) Phone.pinVisible = true
+      }
+    }
 
     Rectangle {
       anchors.fill: parent
@@ -98,6 +122,7 @@ WlSessionLock {
     }
 
     PinPad {
+      id: pad
       anchors.centerIn: parent
       anchors.verticalCenterOffset: Theme.px(20)
       opacity: Phone.pinVisible ? 1 : 0
@@ -119,6 +144,7 @@ WlSessionLock {
     Loader {
       anchors.fill: parent
       active: Notifs.incomingCall !== null
+      onActiveChanged: if (!active) lockKeys.forceActiveFocus()
       sourceComponent: CallCard { call: Notifs.incomingCall; onLockScreen: true }
     }
 

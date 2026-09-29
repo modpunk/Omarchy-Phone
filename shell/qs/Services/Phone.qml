@@ -22,6 +22,15 @@ Singleton {
   property bool keyboardOpen: false
   property bool powerMenuOpen: false
   property bool screenOn: true
+  readonly property bool anyOverlay: shade > 0 || switcherOpen || powerMenuOpen
+  // Set by the keyboard shortcuts just before they open a surface, so it
+  // opens with the focus ring on its first item (touch opens it without one).
+  property bool byKey: false
+  function takeByKey() { const k = byKey; byKey = false; return k }
+  // Shift+Tab arrives as Backtab from a real keyboard but as Tab+Shift from
+  // some (virtual) ones; surfaces read keys through this.
+  function keyOf(ev) { return ev.key === Qt.Key_Tab && (ev.modifiers & Qt.ShiftModifier) ? Qt.Key_Backtab : ev.key }
+  signal homeRequested()           // home pressed: the home screen clears its search
   readonly property bool atHome: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id === homeWorkspace : true
 
   // --- device state the shell owns
@@ -55,6 +64,7 @@ Singleton {
   // --- navigation
   function home() {
     if (locked) { pinVisible = false; return }
+    homeRequested()
     const hadOverlay = shade > 0 || switcherOpen || powerMenuOpen
     closeOverlays()
     keyboardOpen = false
@@ -74,13 +84,14 @@ Singleton {
   NumberAnimation { id: shadeAnim; target: root; property: "shade"; duration: 180; easing.type: Easing.OutCubic }
   function openShade() { if (locked) return; switcherOpen = false; shadeAnim.to = 1; shadeAnim.restart() }
   function closeShade() { if (shade === 0) return; shadeAnim.to = 0; shadeAnim.restart() }
+  function toggleShade() { if (shade > 0) closeShade(); else openShade() }
   function settleShade(velocity) {
     if (velocity > 300 || (velocity > -300 && shade > 0.4)) openShade(); else closeShade()
   }
 
   // --- lock / screen
-  function lock() { closeOverlays(); keyboardOpen = false; pinVisible = false; locked = true }
-  function unlock() { locked = false; pinVisible = false }
+  function lock() { byKey = false; closeOverlays(); keyboardOpen = false; pinVisible = false; locked = true }
+  function unlock() { byKey = false; locked = false; pinVisible = false }
   function screenOff() { screenOn = false; hypr('hl.dsp.dpms({ action = "disable" })') }
   function screenOnNow() { screenOn = true; hypr('hl.dsp.dpms({ action = "enable" })') }
 
@@ -99,6 +110,8 @@ Singleton {
     if (!screenOn) screenOnNow()
     closeShade(); switcherOpen = false; powerMenuOpen = true
   }
+
+  function togglePowerMenu() { if (powerMenuOpen) powerMenuOpen = false; else powerMenu() }
 
   // Home key: single press = home, double press = switcher.
   Timer { id: homeDouble; interval: 300; onTriggered: root.home() }

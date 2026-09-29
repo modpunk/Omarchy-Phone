@@ -9,6 +9,7 @@ Item {
   id: root
   required property var notification
   property bool compact: false
+  property bool focused: false      // keyboard focus ring (shade)
   implicitHeight: card.implicitHeight
   width: parent ? parent.width : 0
 
@@ -21,6 +22,7 @@ Item {
     x: drag.active ? drag.translation.x : 0
     opacity: 1 - Math.min(0.7, Math.abs(x) / width)
     Behavior on x { enabled: !drag.active; NumberAnimation { duration: 120 } }
+    FocusRing { shown: root.focused; gap: 0 }
 
     Row {
       id: body
