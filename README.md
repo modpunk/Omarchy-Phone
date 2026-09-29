@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="brand/logo-light.svg">
+    <img alt="Omarchy Phone: Vox Libertatis" src="brand/logo-light.svg" width="720">
+  </picture>
+</p>
+
 # Omarchy Phone
 
 *Vox Libertatis*
