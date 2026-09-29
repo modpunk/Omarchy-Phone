@@ -297,7 +297,7 @@ class CallManager:
             remote = numbers.normalize_address(raw, region) or raw
         name, cid = self._who(remote) if remote else ("Unknown", None)
         if cid is None and ev.get("display_name"):
-            name = f"{ev['display_name']} ({name})" if remote else ev["display_name"]
+            name = ev["display_name"]  # caller-supplied and unverified; the UI always shows the number too
         decision = screening.screen(remote, self._screen_context(remote))
         call = Call(id=ev["call_id"], remote=remote, name=name or "Unknown", direction="in",
                     backend=backend.id, state="incoming", video=bool(ev.get("video")),

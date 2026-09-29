@@ -171,7 +171,7 @@ class Flows(unittest.TestCase):
         cid = self.b.mgr.simulate_incoming("+13125550177", display="Robo")
         call = self.b.call()
         self.assertTrue(call.silent)
-        self.assertEqual(call.name, "Robo ((312) 555-0177)")
+        self.assertEqual((call.name, call.to_dict()["display"]), ("Robo", "(312) 555-0177"))
         self.b.mgr.answer(cid)
         self.assertTrue(spin(lambda: self.b.call().state == "active"))
 
