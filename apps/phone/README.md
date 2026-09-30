@@ -17,7 +17,10 @@ Calls over Wi-Fi (no modem needed), contacts, call history and call screening, s
 - `omarchy-phone` (`omarchy_phone/ui.py`): GTK4 + libadwaita UI; starts phoned if it is not running.
 - `phonectl` (`omarchy_phone/cli.py`): CLI for scripts and the shell.
 
-Requirements: Python 3.11+, PyGObject, GTK 4.10+, libadwaita 1.7+, PipeWire (`pw-dump`, `wpctl`).
+Requirements: Python 3.11+, PyGObject, GTK 4.10+, libadwaita 1.7+, PipeWire (`pw-dump`, `wpctl`),
+`libsecret` (its GObject-introspection typelib, `Secret-1`, used by the SIP account's password
+storage — Arch package `libsecret`) plus a Secret Service provider (`gnome-keyring`, or KDE's
+`ksecretservice` compat daemon; either is normally already running in a desktop session).
 Optional: `python-phonenumbers` (libphonenumber; a built-in fallback is used without it), `baresip`.
 
 ## Try it (no accounts, nothing leaves 127.0.0.1)
@@ -62,18 +65,23 @@ it at hangup); set `OMARCHY_PHONE_AUDIO_DRYRUN=1` to disable that.
 ## Tests
 
 ```sh
-scripts/test.sh            # all 55 tests on a private D-Bus session (includes the shell contract)
+scripts/test.sh            # all tests on a private D-Bus session (includes the shell contract)
 python3 -m unittest discover -s tests -t .   # same, minus the 3 tests that need a private bus
 scripts/screenshots.sh     # re-render docs/phone/screenshots headlessly (gtk4-broadwayd)
 ```
 
+- `test_accounts.py`: SIP account validation, baresip account-line building, the keyring wrapper
+  (against its in-memory stand-in, `OMARCHY_PHONE_KEYRING=memory` — see below), and account
+  add/edit/remove through `phoned`'s own methods (password never lands in Store or `state()`/JSON).
 - `test_numbers.py`: normalization, formatting, detection in text, false positives
   (dates, times, IPs, prices, order IDs, card numbers, URLs, OTP codes).
 - `test_screening.py`: rule precedence, DND + repeat callers + allowed groups, block/allow
   patterns, withheld, spam, neighbour spoofing, emergency numbers.
 - `test_vcard.py`: vCard 2.1/3.0/4.0 import, quoted-printable, folding, round trip, store merge.
 - `test_calls.py`: real loopback calls between instances: answer/hold/video/mute, missed,
-  decline, voicemail, blocked before ringing, DND, group call merge + leave; baresip protocol.
+  decline, voicemail, blocked before ringing, DND, group call merge + leave; baresip protocol,
+  including registration status (event-driven and `reginfo` parsing) against a fake baresip — a
+  real loopback TCP listener, not a mock, so the backend's own socket/GLib-IO handling runs for real.
 - `test_notify.py`: incoming/pill/missed notifications against a fake shell notification server.
 - `test_sip.py`: real SIP calls through Asterisk + two baresip endpoints in a Docker container
   (`tests/sipbed/`): ring, answer, decline, cancel, block, hold/resume, mute, DTMF, hangup, echo

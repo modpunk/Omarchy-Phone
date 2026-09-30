@@ -24,7 +24,7 @@ phonectl call dial '{"address": "+1 212 555 0101", "video": true}'
 
 | Method | Arguments | Result |
 |---|---|---|
-| `state` | | `{calls, speaker, dnd, registration, backends, profile, own_number}` |
+| `state` | | `{calls, speaker, dnd, registration, backends, profile, own_number}`; `registration` is `{backend_id: {state, ok, detail, reason}}` (see "Registration" below) |
 | `dial` | `address`, `video=false` | call object |
 | `answer` | `call_id`, `video=false` | |
 | `decline` | `call_id`, `voicemail=false` | |
@@ -59,7 +59,32 @@ numbers are normalized to E.164, patterns like `+1900*` kept as-is), `list_remov
 
 Settings keys: `region`, `own_number`, `dnd`, `dnd_action`, `dnd_repeat_callers`,
 `dnd_allowed_groups`, `unknown_action`, `withheld_action`, `spam_action`, `neighbor_spoof_filter`,
-`clipboard_detect`, `backend`. Actions are `ring`, `silent`, `voicemail`, `reject`.
+`clipboard_detect`, `backend`, `sip_account` (read-only through `set`; use the SIP account methods
+below — `set("sip_account", …)` is refused so a password can never be smuggled in through it).
+Actions are `ring`, `silent`, `voicemail`, `reject`.
+
+**SIP account**: `sip_account()` → the saved account without its password, or `null`:
+`{display_name, username, domain, proxy, transport, has_password}`. `save_sip_account(account,
+password=null)` validates and saves `account` (`{display_name="", username, domain, proxy="",
+transport="udp"}`; `username` containing `user@domain` is split automatically) and, if `password` is
+given, stores it in the system keyring (never in Store/settings, never in a file); a blank/omitted
+`password` on an existing account keeps the current one, and one is required the first time. Raises
+on invalid input (bad transport, empty username/domain, a password containing `"`, `<`, `>` or a
+newline, …) with a joined, human-readable message. Also pushes the account live to a connected `sip`
+backend (`uanew` over ctrl_tcp) so it does not wait for a daemon restart. `delete_sip_account()`
+removes the saved account, clears its keyring entry, and tears down the live account (`uadel`).
+
+**Registration**: `registration(backend=null, refresh=false)` → the `state()` call's `registration`
+dict (or just one backend's, if `backend` is given); `refresh=true` also asks that backend to check
+right now (baresip: sends `reginfo`) — the answer arrives as a `registration` `Event`, since the
+check itself is asynchronous. Each backend's status is `{state, ok, detail, reason}`: `state` is one
+of `connecting` (transport up, no verdict yet), `no_account` (nothing configured), `registering`,
+`registered`, `failed`, or `offline` (not connected); `ok` is shorthand for `state == "registered"`;
+`detail` is a human string (server, expiry, or the reason the transport is down); `reason` is set
+only on `failed`, from baresip's last `REGISTER_FAIL` (e.g. `"401 Unauthorized"`). Before this, `sip`
+reported `ok: true` as soon as its `ctrl_tcp` TCP connection came up, regardless of whether SIP
+registration had actually succeeded — that is what `no_account`/`connecting`/`registering` now
+distinguish from a real `registered`.
 
 ## Events
 
@@ -72,7 +97,7 @@ Settings keys: `region`, `own_number`, `dnd`, `dnd_action`, `dnd_repeat_callers`
 | `ended` | `call` + `status`, `reason` | call finished; status is what the log records |
 | `conference` | `conference`, `calls` | calls merged |
 | `audio` | `speaker`, `route` | route changed |
-| `registration` | `backend`, `ok`, `detail` | backend connected/disconnected |
+| `registration` | `backend`, `state`, `ok`, `detail`, `reason` | a backend's registration state changed (see "Registration" above) |
 | `contacts`, `history`, `lists`, `settings` | | data changed, reload |
 | `dnd` | `on` | do-not-disturb toggled |
 | `show` | `page`, `number`, `call_id` | UI should come forward |
