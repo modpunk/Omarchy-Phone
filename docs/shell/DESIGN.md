@@ -449,14 +449,19 @@ child process and reads one line per state change from its stdout:
 GTK4, Chromium/Electron and most Qt apps create a `text-input-v3` object and
 call `enable()`/`disable()` on it as focus moves, and **foot also speaks it**
 (for IME composition), so a terminal auto-shows the keyboard too, not just
-GUI apps. Typing goes through the same connection when a field is focused —
-`commit_string` for plain characters and `delete_surrounding_text` for
-backspace, which is the correct path for an input method and doesn't depend
-on wtype racing key events into whatever the compositor currently thinks has
-focus. Enter has no input-method equivalent (apps read a real `Return`
-keysym to submit/newline) and anything with no focused field (an app that
-never adopted text-input-v3) has no input method to talk to either, so both
-still fall back to `wtype` (virtual-keyboard-v1), as before.
+GUI apps. Plain characters go through the same connection when a field is
+focused (`commit_string`), which is the correct path for an input method to
+insert text and doesn't depend on wtype racing a key event into whatever the
+compositor currently thinks has focus. Backspace stays a real `BackSpace` key
+event (`wtype`) for every app: `delete_surrounding_text` is the
+protocol-correct way for an input method to delete, and it works in GTK4, but
+foot doesn't act on it despite speaking text-input-v3 (confirmed in
+`shell/preview/run.sh`'s `oskfoot` scenario), so there's no single correct
+choice here and a key event is what already works everywhere. Enter has no
+input-method equivalent either (apps read a real `Return` keysym to
+submit/newline), and anything with no focused field (an app that never
+adopted text-input-v3) has no input method to talk to, so both of those
+always go through `wtype` too, as before.
 
 `Phone.keyboardOpen` is derived, never set directly:
 `keyboardPinned || (imFieldFocused && !keyboardSuppressed && !hardwareKeyboardConnected)`.
@@ -638,6 +643,7 @@ Focus-driven on-screen-keyboard scenarios:
 | oskgtk: a GTK4 field focused auto-shows it, typed text lands via the input method | ![](screenshots/22-osk-auto-show.png) |
 | oskgtk: manual toggle hides it while the field is still focused | ![](screenshots/23-osk-manual-hide.png) |
 | oskfoot: foot auto-shows it too, typed text reaches the terminal | ![](screenshots/24-osk-foot-auto.png) |
+| oskfoot: backspace (wtype) still deletes, unlike delete_surrounding_text | ![](screenshots/25-osk-foot-backspace.png) |
 
 ## Non-goals (v1) and next steps
 
