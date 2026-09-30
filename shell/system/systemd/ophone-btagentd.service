@@ -1,0 +1,45 @@
+# User unit: install to /usr/lib/systemd/user/ophone-btagentd.service (or
+# ~/.config/systemd/user/ for a manual test) and enable for the phone's
+# session user:
+#
+#   systemctl --user enable --now ophone-btagentd.service
+#
+# WantedBy=default.target, not graphical-session.target: this image has no
+# display-manager-style "graphical session" target at all -- the phone's own
+# session unit (omarchy-phone-session.service, in omarchy-iphone6s'
+# tools/userland/overlay/etc/systemd/user/) is itself WantedBy=default.target
+# for the lingering session user, so this unit follows the same convention
+# rather than inventing a target nothing else provides.
+#
+# It talks to org.bluez on the SYSTEM bus (registering a real Agent1, see
+# F5/F6 in the security review) and to the shell's own notification daemon
+# on the user's SESSION bus, so it belongs in the user session, not a system
+# service -- registering an agent as a system service running as root would
+# still need to reach the logged-in user's session bus to raise a
+# notification, which is more moving parts for no benefit here (the phone
+# has exactly one session user). There's no reliable way to order a user
+# unit After= a system unit like bluetooth.service across the two separate
+# systemd manager instances; Restart=on-failure with a short RestartSec
+# covers "bluetoothd isn't up yet" well enough (RegisterAgent fails, the
+# unit restarts, tries again).
+[Unit]
+Description=Omarchy Phone Bluetooth pairing agent (real on-screen confirm, not bluetoothd's default auto-accept)
+Documentation=https://github.com/modpunk/Omarchy-Phone/blob/shell/docs/shell/DESIGN.md
+ConditionUser=!root
+
+[Service]
+Type=simple
+ExecStart=/usr/share/omarchy-phone/shell/bin/ophone-btagentd
+Restart=on-failure
+RestartSec=2
+# Deliberately NOT ProtectSystem=/ProtectHome=: those need unprivileged user
+# namespaces, which this device's kernel may not have (or may have disabled).
+# A sandboxing option that silently fails the unit to start is the wrong
+# trade for a service whose entire job is closing an auto-accept hole --
+# "the hardening broke, so bluetoothd fell back to auto-accept" is exactly
+# the F5 regression this unit exists to prevent. NoNewPrivileges is safe
+# (no exec, no setuid anywhere in this path).
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

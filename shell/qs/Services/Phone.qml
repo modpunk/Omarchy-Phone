@@ -1,6 +1,8 @@
 pragma Singleton
 import QtQuick
 import Quickshell
+import Quickshell.Io
+import Quickshell.Wayland
 import Quickshell.Hyprland
 
 // Shell-wide state and actions. Surfaces bind to these properties; the
@@ -14,6 +16,13 @@ Singleton {
   readonly property int appWorkspace: 2
 
   // --- surface state
+  // F4 (security review): this used to default to false unconditionally, so
+  // a freshly booted phone came up fully unlocked until someone pressed
+  // power once. It now starts locked whenever a lock-screen PIN is
+  // configured (see pinConfigured below) -- and stays unlocked at boot only
+  // when there's genuinely no PIN to unlock with, so this can never brick a
+  // device that hasn't been provisioned yet. dryRun (the preview) is always
+  // unlocked at boot so the existing scenarios are unaffected.
   property bool locked: false
   property bool pinVisible: false
   property real shade: 0            // 0 = closed .. 1 = fully open
@@ -32,6 +41,49 @@ Singleton {
   function keyOf(ev) { return ev.key === Qt.Key_Tab && (ev.modifiers & Qt.ShiftModifier) ? Qt.Key_Backtab : ev.key }
   signal homeRequested()           // home pressed: the home screen clears its search
   readonly property bool atHome: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id === homeWorkspace : true
+
+  // --- lock-screen PIN (docs/shell/DESIGN.md "Lock screen PIN")
+  readonly property string pinFile: Quickshell.env("OPHONE_PIN_FILE") || "/etc/omarchy-phone/pin-hash"
+  property bool pinConfigured: false
+  property bool _bootLockDecided: false
+  FileView {
+    path: root.pinFile
+    printErrors: false
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: { root.pinConfigured = true; root._decideBootLock() }
+    onLoadFailed: { root.pinConfigured = false; root._decideBootLock() }
+  }
+  function _decideBootLock() {
+    if (_bootLockDecided) return
+    _bootLockDecided = true
+    if (!dryRun && pinConfigured) locked = true
+  }
+
+  // --- idle auto-lock (docs/shell/DESIGN.md "Idle auto-lock"): Hyprland's
+  // ext-idle-notify-v1, the same protocol swaylock/hypridle use, consumed
+  // directly through Quickshell's own wrapper (no hypridle process, no extra
+  // dependency -- idiomatic for this codebase, which already leans on
+  // Quickshell.Wayland for WlSessionLock rather than a separate lock binary).
+  // Locking requires a configured PIN for the same reason the boot lock
+  // does; the screen still blanks either way, to save power.
+  IdleMonitor {
+    id: idleMonitor
+    enabled: true
+    respectInhibitors: true
+    timeout: {
+      // Seconds, not milliseconds: verified empirically (see docs/shell/DESIGN.md
+      // "Idle auto-lock") -- IdleMonitor.timeout: 3 marks idle at ~3s.
+      const override = Quickshell.env("OPHONE_IDLE_SECONDS")
+      const n = override ? parseInt(override) : Config.idleLockSeconds
+      return Number.isFinite(n) ? n : Config.idleLockSeconds
+    }
+    onIsIdleChanged: {
+      if (!isIdle || !root.screenOn) return
+      if (root.pinConfigured) root.lock()
+      root.screenOff()
+    }
+  }
 
   // --- device state the shell owns
   property bool silent: false

@@ -18,6 +18,10 @@ Singleton {
     return false
   }
   property string wallpaper: Quickshell.env("OPHONE_WALLPAPER") || ""
+  // Idle timeout before the shell locks (if a PIN is configured) and blanks
+  // the screen (docs/shell/DESIGN.md "Idle auto-lock"). OPHONE_IDLE_SECONDS
+  // overrides this for quick testing (shell/preview/run.sh scenarios).
+  property int idleLockSeconds: 180
 
   FileView {
     path: (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/omarchy-phone/shell.json"
@@ -30,6 +34,7 @@ Singleton {
         if (Array.isArray(j.favorites)) root.favorites = j.favorites
         if (Array.isArray(j.hidden)) root.hidden = root.hidden.concat(j.hidden)
         if (typeof j.wallpaper === "string") root.wallpaper = j.wallpaper
+        if (Number.isFinite(j.idleLockSeconds)) root.idleLockSeconds = j.idleLockSeconds
       } catch (e) { console.warn("omarchy-phone: bad shell.json:", e) }
     }
   }

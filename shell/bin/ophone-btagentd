@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""ophone-btagentd: a real BlueZ pairing agent for the phone shell.
+
+Why this exists (docs/shell/DESIGN.md "Bluetooth pairing confirmation", F5/F6
+in the security review): with no application agent registered, bluetoothd
+falls back to its own built-in agent, which has I/O capability
+NoInputNoOutput. That auto-accepts "Just Works" pairing from anything in
+range with no on-screen confirmation at all -- and since the phone's session
+user has passwordless sudo, a trusted Bluetooth keyboard is keystroke
+injection into a root shell. This daemon registers a KeyboardDisplay agent
+and requires an explicit tap on a notification (Pair / Reject) before ANY of:
+
+  * RequestConfirmation / RequestAuthorization -- "may this device pair?"
+    (the Just Works / numeric-comparison paths bluetoothd's default agent
+    used to auto-accept)
+  * AuthorizeService -- "may this already-paired device use this profile?"
+
+before returning success to bluetoothd. Anything not explicitly accepted
+within OPHONE_BT_TIMEOUT seconds (default 30) is rejected -- deny by default,
+same as the lock screen's "swipe up" being required before a PIN pad even
+shows.
+
+RequestPasskey / RequestPinCode (this phone typing a code *into* the peer)
+aren't implemented -- there's no on-screen numeric keyboard for that yet, so
+they're refused rather than silently accepted (see docs/shell/DESIGN.md,
+next steps). DisplayPasskey / DisplayPinCode (bluetoothd asking *us* to show
+a code) need no accept/reject: the passkey-entry protocol's own
+security comes from the peer having to type back a code it can only know if
+it can read this phone's screen.
+
+Talks to the shell exactly the way apps/phone does (docs/shell/INTEGRATION.md):
+a plain freedesktop notification with action buttons, nothing shell-specific.
+While the phone is locked the shell shows no notification content (only a
+count), so a pairing prompt cannot be approved without unlocking first --
+it simply times out and is rejected. That's intentional, not a bug.
+
+Environment (all optional, mainly for shell/tests/test_bt_agent.py):
+  OPHONE_BT_BUS         "system" (default) or "session" -- which bus org.bluez
+                        lives on. Tests run a mock org.bluez on a private
+                        session bus and set this to "session".
+  OPHONE_BT_CAPABILITY  agent I/O capability to register (default KeyboardDisplay)
+  OPHONE_BT_TIMEOUT     seconds before an unanswered request is rejected (default 30)
+  OPHONE_BT_AGENT_PATH  object path for our agent (default /org/omarchy/phone/agent)
+"""
+from __future__ import annotations
+
+import os
+import sys
+
+from gi.repository import Gio, GLib
+
+AGENT_IFACE = "org.bluez.Agent1"
+AGENT_MANAGER_IFACE = "org.bluez.AgentManager1"
+BLUEZ_ROOT = "/org/bluez"
+NOTIFY_BUS, NOTIFY_PATH, NOTIFY_IFACE = (
+    "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
+)
+
+AGENT_XML = """
+<node>
+  <interface name="org.bluez.Agent1">
+    <method name="Release"/>
+    <method name="RequestPinCode">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="s" name="pincode" direction="out"/>
+    </method>
+    <method name="DisplayPinCode">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="s" name="pincode" direction="in"/>
+    </method>
+    <method name="RequestPasskey">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="u" name="passkey" direction="out"/>
+    </method>
+    <method name="DisplayPasskey">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="u" name="passkey" direction="in"/>
+      <arg type="q" name="entered" direction="in"/>
+    </method>
+    <method name="RequestConfirmation">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="u" name="passkey" direction="in"/>
+    </method>
+    <method name="RequestAuthorization">
+      <arg type="o" name="device" direction="in"/>
+    </method>
+    <method name="AuthorizeService">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="s" name="uuid" direction="in"/>
+    </method>
+    <method name="Cancel"/>
+  </interface>
+</node>
+"""
+
+
+def log(*a):
+    if not os.environ.get("OPHONE_BT_QUIET"):
+        print("ophone-btagentd:", *a, file=sys.stderr)
+
+
+class PairingAgent:
+    def __init__(self):
+        self.path = os.environ.get("OPHONE_BT_AGENT_PATH", "/org/omarchy/phone/agent")
+        self.capability = os.environ.get("OPHONE_BT_CAPABILITY", "KeyboardDisplay")
+        self.timeout = int(os.environ.get("OPHONE_BT_TIMEOUT", "30"))
+        bluez_bus_type = Gio.BusType.SESSION if os.environ.get("OPHONE_BT_BUS") == "session" else Gio.BusType.SYSTEM
+        self.bluez_bus = Gio.bus_get_sync(bluez_bus_type, None)
+        self.notify_bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self.pending: dict[int, dict] = {}   # notification id -> {invocation, device, answered}
+        self._next_local_id = 1
+
+        info = Gio.DBusNodeInfo.new_for_xml(AGENT_XML).interfaces[0]
+        self.reg_id = self.bluez_bus.register_object(self.path, info, self._handle_call, None, None)
+
+        self.notify_bus.signal_subscribe(
+            NOTIFY_BUS, NOTIFY_IFACE, "ActionInvoked", NOTIFY_PATH, None, Gio.DBusSignalFlags.NONE, self._on_action)
+        self.notify_bus.signal_subscribe(
+            NOTIFY_BUS, NOTIFY_IFACE, "NotificationClosed", NOTIFY_PATH, None, Gio.DBusSignalFlags.NONE, self._on_closed)
+
+    def register(self):
+        self.bluez_bus.call_sync(
+            "org.bluez", BLUEZ_ROOT, AGENT_MANAGER_IFACE, "RegisterAgent",
+            GLib.Variant("(os)", (self.path, self.capability)), None, Gio.DBusCallFlags.NONE, -1, None)
+        self.bluez_bus.call_sync(
+            "org.bluez", BLUEZ_ROOT, AGENT_MANAGER_IFACE, "RequestDefaultAgent",
+            GLib.Variant("(o)", (self.path,)), None, Gio.DBusCallFlags.NONE, -1, None)
+        log(f"registered agent {self.path} (capability={self.capability}) as the default BlueZ agent")
+
+    # -- device metadata (best-effort; a bare object path is a fine fallback) --
+    def _device_label(self, device_path: str) -> str:
+        for prop in ("Alias", "Name"):
+            try:
+                v = self.bluez_bus.call_sync(
+                    "org.bluez", device_path, "org.freedesktop.DBus.Properties", "Get",
+                    GLib.Variant("(ss)", ("org.bluez.Device1", prop)), GLib.VariantType("(v)"),
+                    Gio.DBusCallFlags.NONE, 2000, None)
+                name = v.unpack()[0]
+                if name:
+                    return str(name)
+            except GLib.Error:
+                continue
+        return device_path.rsplit("/", 1)[-1]
+
+    # -- ask the user, hold the D-Bus call open until they answer or time out --
+    def _ask(self, invocation, device_path: str, body: str):
+        label = self._device_label(device_path)
+        hints = {
+            "urgency": GLib.Variant("y", 2),
+            "category": GLib.Variant("s", "device"),
+            "resident": GLib.Variant("b", True),
+        }
+        args = GLib.Variant(
+            "(susssasa{sv}i)",
+            ("Bluetooth", 0, "bluetooth", f"Pair with {label}?", body,
+             ["pair", "Pair", "reject", "Reject"], hints, 0))
+        try:
+            reply = self.notify_bus.call_sync(
+                NOTIFY_BUS, NOTIFY_PATH, NOTIFY_IFACE, "Notify", args, GLib.VariantType("(u)"),
+                Gio.DBusCallFlags.NONE, 5000, None)
+            nid = reply.unpack()[0]
+        except GLib.Error as e:
+            log("no notification daemon reachable, rejecting by default:", e)
+            invocation.return_dbus_error("org.bluez.Error.Rejected", "no notification service to ask the user")
+            return
+        self.pending[nid] = {"invocation": invocation, "device": device_path, "answered": False}
+        GLib.timeout_add_seconds(self.timeout, self._expire, nid)
+        log(f"asked about {device_path} ({label}) as notification {nid}, timeout {self.timeout}s")
+
+    def _finish(self, nid: int, accepted: bool):
+        entry = self.pending.pop(nid, None)
+        if entry is None or entry["answered"]:
+            return
+        entry["answered"] = True
+        if accepted:
+            entry["invocation"].return_value(None)
+        else:
+            entry["invocation"].return_dbus_error("org.bluez.Error.Rejected", "rejected")
+        # resident: true (see _ask) keeps the card up after an action is
+        # invoked; close it explicitly so an answered Pair/Reject prompt
+        # doesn't linger in the shade.
+        try:
+            self.notify_bus.call_sync(
+                NOTIFY_BUS, NOTIFY_PATH, NOTIFY_IFACE, "CloseNotification", GLib.Variant("(u)", (nid,)),
+                None, Gio.DBusCallFlags.NONE, 2000, None)
+        except GLib.Error:
+            pass
+
+    def _expire(self, nid: int):
+        if nid in self.pending and not self.pending[nid]["answered"]:
+            log(f"notification {nid} timed out with no answer -- rejecting")
+            self._finish(nid, accepted=False)
+        return GLib.SOURCE_REMOVE
+
+    def _on_action(self, connection, sender, path, iface, signal, params, *user):
+        nid, action = params.unpack()
+        if nid not in self.pending:
+            return
+        self._finish(nid, accepted=(action == "pair"))
+
+    def _on_closed(self, connection, sender, path, iface, signal, params, *user):
+        nid, _reason = params.unpack()
+        # Dismissed without tapping a button: treat as reject, not a silent accept.
+        self._finish(nid, accepted=False)
+
+    # -- org.bluez.Agent1 method dispatch --
+    def _handle_call(self, connection, sender, object_path, interface, method, params, invocation):
+        try:
+            if method == "Release":
+                invocation.return_value(None)
+            elif method == "RequestConfirmation":
+                device, passkey = params.unpack()
+                self._ask(invocation, device, f"Confirm the code shown on {device}: {passkey:06d}")
+            elif method == "RequestAuthorization":
+                (device,) = params.unpack()
+                self._ask(invocation, device, "This device wants to pair. No code to compare -- pair anyway?")
+            elif method == "AuthorizeService":
+                device, uuid = params.unpack()
+                self._ask(invocation, device, f"Let this paired device use service {uuid}?")
+            elif method == "DisplayPasskey":
+                device, passkey, entered = params.unpack()
+                log(f"display passkey for {device}: {passkey:06d} ({entered} digits entered so far)")
+                invocation.return_value(None)
+            elif method == "DisplayPinCode":
+                device, pincode = params.unpack()
+                log(f"display PIN for {device}: {pincode}")
+                invocation.return_value(None)
+            elif method in ("RequestPasskey", "RequestPinCode"):
+                # No on-screen numeric entry yet (docs/shell/DESIGN.md next steps):
+                # refuse rather than silently accept or fabricate a value.
+                (device,) = params.unpack()
+                log(f"{method} for {device}: not implemented, rejecting")
+                invocation.return_dbus_error("org.bluez.Error.Rejected", f"{method} not supported")
+            elif method == "Cancel":
+                for nid, entry in list(self.pending.items()):
+                    if not entry["answered"]:
+                        self._finish(nid, accepted=False)
+                invocation.return_value(None)
+            else:
+                invocation.return_dbus_error("org.freedesktop.DBus.Error.UnknownMethod", method)
+        except Exception as e:  # noqa: BLE001 - a bug here must not wedge bluetoothd's call
+            log("error handling", method, ":", e)
+            invocation.return_dbus_error("org.bluez.Error.Canceled", str(e))
+
+
+def main() -> int:
+    agent = PairingAgent()
+    agent.register()
+    GLib.MainLoop().run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

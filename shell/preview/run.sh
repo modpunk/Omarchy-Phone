@@ -28,6 +28,16 @@ if [[ -z "${OPHONE_IN_PRIVATE_BUS:-}" ]]; then
   [[ "$host_wl" == /* ]] || host_wl="$host_rt/$host_wl"
   [[ -S "$host_wl" ]] || { echo "no host Wayland socket at $host_wl" >&2; exit 1; }
   rm -rf "$BASE"; mkdir -p "$BASE"/{rt,config,cache,data,state}; chmod 700 "$BASE/rt"
+  # Test-only: seed a theme into the private XDG_STATE_HOME *before* Hyprland/qs
+  # start, so Theme.qml's initial load sees it -- unlike writing to "$BASE/state"
+  # after the fact, which races the shell's own startup (docs/shell/DESIGN.md
+  # "Theme" -- verifying the live-reload fix needs a theme present at boot,
+  # then swapped, to reproduce the actual bug scenario).
+  if [[ -n "${OPHONE_SEED_THEME_DIR:-}" ]]; then
+    mkdir -p "$BASE/state/omarchy/current"
+    cp -r "$OPHONE_SEED_THEME_DIR" "$BASE/state/omarchy/current/theme"
+    echo "${OPHONE_SEED_THEME_NAME:-seed}" >"$BASE/state/omarchy/current/theme.name"
+  fi
   exec env -i \
     HOME="$HOME" USER="${USER:-$(id -un)}" PATH="$SHELL_DIR/bin:$PATH" LANG="${LANG:-C.UTF-8}" \
     TERM="${TERM:-dumb}" \
@@ -36,11 +46,23 @@ if [[ -z "${OPHONE_IN_PRIVATE_BUS:-}" ]]; then
     XDG_DATA_HOME="$BASE/data" XDG_STATE_HOME="$BASE/state" XDG_DATA_DIRS="/usr/local/share:/usr/share" \
     OPHONE_PREVIEW_MODE="${OPHONE_PREVIEW_MODE:-}" OPHONE_PREVIEW_SCALE="${OPHONE_PREVIEW_SCALE:-}" \
     OPHONE_SCREENSHOTS="$OUT" OPHONE_PREVIEW_DIR="$BASE" \
+    OPHONE_IDLE_SECONDS="${OPHONE_IDLE_SECONDS:-}" OPHONE_PIN_FILE="${OPHONE_PIN_FILE:-}" \
+    OPHONE_PAM_DIR="${OPHONE_PAM_DIR:-}" OPHONE_PAM_SERVICE="${OPHONE_PAM_SERVICE:-}" \
+    QT_LOGGING_RULES="${QT_LOGGING_RULES:-}" \
     dbus-run-session -- "$0" "$@"
 fi
 
 [[ -n "$OPHONE_PREVIEW_MODE" ]] || unset OPHONE_PREVIEW_MODE
 [[ -n "$OPHONE_PREVIEW_SCALE" ]] || unset OPHONE_PREVIEW_SCALE
+# Test-only overrides (docs/shell/DESIGN.md "Idle auto-lock" / "Lock screen
+# PIN"): unset rather than leave as empty strings, so Phone.qml/LockScreen.qml
+# see "not set" (Quickshell.env returns "" either way, but an explicit unset
+# is clearer to read here and in `env` dumps).
+[[ -n "$OPHONE_IDLE_SECONDS" ]] || unset OPHONE_IDLE_SECONDS
+[[ -n "$OPHONE_PIN_FILE" ]] || unset OPHONE_PIN_FILE
+[[ -n "$OPHONE_PAM_DIR" ]] || unset OPHONE_PAM_DIR
+[[ -n "$OPHONE_PAM_SERVICE" ]] || unset OPHONE_PAM_SERVICE
+[[ -n "$QT_LOGGING_RULES" ]] || unset QT_LOGGING_RULES
 ulimit -c 0   # a crash in the preview must not land in the host's coredump list
 LOG="$BASE/log"; mkdir -p "$LOG" "$OUT"
 PIDS=()

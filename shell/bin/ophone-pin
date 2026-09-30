@@ -1,0 +1,190 @@
+#!/usr/bin/python3
+# Absolute path, not /usr/bin/env python3: this is invoked directly by
+# pam_exec (see shell/system/pam/ophone-lock), whose exec environment isn't
+# guaranteed to have a PATH that resolves python3 via env.
+"""ophone-pin: the phone lock screen's PIN, hashed and stored independently of
+the account/SSH/sudo password (docs/shell/DESIGN.md "Lock screen PIN").
+
+  ophone-pin set [file]      prompt for a new PIN (twice), hash it, write it.
+                              Must run as root: sudo ophone-pin set
+  ophone-pin verify [file]   read a PIN from stdin, exit 0 if it matches.
+                              This is what /etc/pam.d/ophone-lock's pam_exec
+                              line calls (via `ophone-ctl` is NOT involved --
+                              PAM invokes this directly with the entered PIN
+                              on stdin, from pam_exec's `expose_authtok`).
+  ophone-pin check <pin> [file]   like verify, but the PIN is an argument
+                              (dev/test convenience only -- never used by PAM,
+                              since argv is visible to other users via ps).
+
+[file] defaults to $OPHONE_PIN_FILE or /etc/omarchy-phone/pin-hash.
+
+Hash format (one line, no libc crypt(), so it doesn't depend on a `crypt`
+module that's gone in modern Python): "scrypt$N$r$p$<salt-hex>$<hash-hex>".
+scrypt(N=2**14, r=8, p=1) is deliberately expensive -- brute-forcing a 4-12
+digit PIN offline (if the hash file ever leaks) should cost real time per
+guess even though the input space is small. pam_faillock (see the PAM file)
+is the online defense: this is the offline one.
+"""
+from __future__ import annotations
+
+import getpass
+import grp
+import hashlib
+import hmac
+import os
+import stat
+import sys
+
+DEFAULT_PIN_FILE = "/etc/omarchy-phone/pin-hash"
+SCRYPT_N = 1 << 14
+SCRYPT_R = 8
+SCRYPT_P = 1
+MIN_LEN, MAX_LEN = 4, 12  # PinPad.qml caps entry at 12 digits
+
+
+def pin_file() -> str:
+    return os.environ.get("OPHONE_PIN_FILE", DEFAULT_PIN_FILE)
+
+
+def hash_pin(pin: str, salt: bytes | None = None) -> str:
+    salt = salt or os.urandom(16)
+    digest = hashlib.scrypt(pin.encode("utf-8"), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32)
+    return f"scrypt${SCRYPT_N}${SCRYPT_R}${SCRYPT_P}${salt.hex()}${digest.hex()}"
+
+
+def verify_pin(pin: str, stored: str) -> bool:
+    try:
+        algo, n, r, p, salt_hex, hash_hex = stored.strip().split("$")
+        if algo != "scrypt":
+            return False
+        salt = bytes.fromhex(salt_hex)
+        want = bytes.fromhex(hash_hex)
+        got = hashlib.scrypt(pin.encode("utf-8"), salt=salt, n=int(n), r=int(r), p=int(p), dklen=len(want))
+        return hmac.compare_digest(got, want)
+    except (ValueError, TypeError):
+        return False
+
+
+def read_hash_file(path: str) -> str | None:
+    try:
+        with open(path, "r") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def write_hash_file(path: str, stored: str, group: str | None = None) -> None:
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    os.chmod(d, 0o750)
+    gid = -1
+    if os.geteuid() == 0 and group:
+        try:
+            gid = grp.getgrnam(group).gr_gid
+        except KeyError:
+            print(f"ophone-pin: no such group {group!r}, leaving group ownership unchanged", file=sys.stderr)
+    if os.geteuid() == 0:
+        # Also chown the directory itself, not just the file inside it: if
+        # this is the first-ever run on a fresh device (or tmpfiles.d hasn't
+        # created /etc/omarchy-phone yet), os.makedirs() above just created it
+        # root:root, and a root:root 0750 dir is NOT traversable by the
+        # session user -- the exact F2 symptom ("PIN pad can never unlock")
+        # this command exists to fix, just moved one level up.
+        os.chown(d, 0, gid)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(stored + "\n")
+        os.chmod(tmp, 0o640)
+        if os.geteuid() == 0:
+            os.chown(tmp, 0, gid)
+        # Not root (OPHONE_PIN_ALLOW_UNPRIVILEGED, for tests): leave ownership
+        # as-is, there's no root to chown to.
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def cmd_set(argv: list[str]) -> int:
+    path = argv[0] if argv else pin_file()
+    if os.geteuid() != 0 and not os.environ.get("OPHONE_PIN_ALLOW_UNPRIVILEGED"):
+        print("ophone-pin: set must run as root (the hash file is root-owned): sudo ophone-pin set", file=sys.stderr)
+        return 2
+    pin = getpass.getpass("New PIN: ")
+    if not (pin.isdigit() and MIN_LEN <= len(pin) <= MAX_LEN):
+        print(f"ophone-pin: PIN must be {MIN_LEN}-{MAX_LEN} digits", file=sys.stderr)
+        return 1
+    again = getpass.getpass("Confirm PIN: ")
+    if pin != again:
+        print("ophone-pin: PINs didn't match", file=sys.stderr)
+        return 1
+    group = os.environ.get("OPHONE_PIN_GROUP") or _default_group()
+    write_hash_file(path, hash_pin(pin), group=group)
+    owner = "root" if os.geteuid() == 0 else "(unchanged, unprivileged test mode)"
+    print(f"ophone-pin: wrote {path} (owner {owner}, group {group or '(unchanged)'}, mode 640)")
+    return 0
+
+
+def _default_group() -> str | None:
+    # Prefer the invoking (pre-sudo) user's primary group, so the phone's
+    # normal session user -- who runs the shell, not root -- can read the
+    # file pam_exec needs to check. Falls back to "omarchy", the default
+    # session user; the image can override with OPHONE_PIN_GROUP at
+    # provisioning time if it uses a different username.
+    name = os.environ.get("SUDO_USER") or os.environ.get("OPHONE_USER")
+    if name:
+        try:
+            import pwd
+            return grp.getgrgid(pwd.getpwnam(name).pw_gid).gr_name
+        except (KeyError, ImportError):
+            pass
+    return "omarchy"
+
+
+def cmd_verify(argv: list[str]) -> int:
+    path = argv[0] if argv else pin_file()
+    pin = sys.stdin.readline().rstrip("\r\n\x00")
+    stored = read_hash_file(path)
+    if stored is None:
+        return 1
+    return 0 if pin and verify_pin(pin, stored) else 1
+
+
+def cmd_check(argv: list[str]) -> int:
+    if not argv:
+        print("usage: ophone-pin check <pin> [file]", file=sys.stderr)
+        return 2
+    pin, path = argv[0], (argv[1] if len(argv) > 1 else pin_file())
+    stored = read_hash_file(path)
+    return 0 if stored and verify_pin(pin, stored) else 1
+
+
+def cmd_file_mode(argv: list[str]) -> int:
+    # Test/ops helper: print the hash file's owner/mode, e.g. "0 640".
+    path = argv[0] if argv else pin_file()
+    st = os.stat(path)
+    print(f"{st.st_uid} {stat.S_IMODE(st.st_mode):o}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__)
+        return 2
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "set":
+        return cmd_set(rest)
+    if cmd == "verify":
+        return cmd_verify(rest)
+    if cmd == "check":
+        return cmd_check(rest)
+    if cmd == "file-mode":
+        return cmd_file_mode(rest)
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

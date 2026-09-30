@@ -110,7 +110,18 @@ around `qs -p <shell>/qs ipc call shell <fn>`):
 Silent mode is also written to `$XDG_RUNTIME_DIR/omarchy-phone/silent`
 (`on`/`off`), so you can read it without a process spawn.
 
-## 5. Windows
+## 5. Bluetooth pairing confirmation
+
+`shell/bin/ophone-btagentd` (registered as the system BlueZ agent -- see
+[DESIGN.md](DESIGN.md#bluetooth-pairing-confirmation)) asks the user to
+approve a pairing/authorization request the same way any other app would:
+a plain notification with `pair`/`reject` actions, `urgency: critical`,
+`resident: true`. Nothing shell-specific: no new hint, no new category, it's
+just another card in the shade. While the phone is locked it shows only as a
+count like any other notification, so a pairing request can't be approved
+without unlocking first -- it simply times out and is rejected.
+
+## 6. Windows
 
 * Every app window goes to the app workspace and is shown full-screen, one app
   at a time. Dialogs (floating windows) are centered and sized to fit.

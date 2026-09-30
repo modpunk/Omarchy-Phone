@@ -166,8 +166,259 @@ leaks around it. It shows the clock, date, a count of notifications (no content,
 for privacy) and a swipe-up hint. Swiping up reveals a numeric PIN pad that
 authenticates the user through PAM (service `ophone-lock`, shipped in
 `shell/system/pam/`, or `$OPHONE_PAM_SERVICE`). In the preview (dry run), PAM is
-never called: any PIN of four or more digits unlocks. An incoming call is shown on top of the lock with accept/decline, so
-answering never requires unlocking. The motto sits under the clock.
+never called: any PIN of four or more digits unlocks (unless `$OPHONE_PAM_DIR`
+is set -- see [Lock screen PIN](#lock-screen-pin) below). An incoming call is
+shown on top of the lock with accept/decline, so answering never requires
+unlocking. The motto sits under the clock.
+
+### Lock screen PIN
+
+The security review (`~/Work/hoolock-iphone5s/notes/security-review.md`,
+findings F2/F3) found that `shell/system/pam/ophone-lock` did `auth include
+login` -- so the lock screen's "PIN" was actually the full account password,
+checked over the same PAM chain as SSH and (via passwordless `wheel` sudo)
+root. Two problems followed from that:
+
+* `PinPad.qml` is digit-only. A non-numeric account password (the shipped
+  default, `omarchy`, is non-numeric) can **never** match, so the lock
+  screen was permanently unusable out of the box.
+* Making it usable meant setting a numeric account password -- which then
+  doubled as the SSH password and the sudo password. One short secret,
+  guessable in the low thousands of tries even with throttling, would have
+  gated the lock screen, remote shell access, and root all at once.
+
+**Fix: the PIN is its own secret**, independent of `/etc/shadow` end to end:
+
+* `shell/bin/ophone-pin` hashes the PIN with `scrypt` (N=2^14, r=8, p=1, a
+  16-byte random salt, deliberately expensive -- see the module docstring)
+  and writes it to `/etc/omarchy-phone/pin-hash` as
+  `scrypt$N$r$p$<salt-hex>$<hash-hex>`. `sudo ophone-pin set` prompts for it
+  twice (never on argv, so it's not visible via `ps` -- see F15 in the
+  security review, the same lesson applied here). This is the provisioning
+  command a future Omarchy settings/menu UI's "Change PIN" would shell out
+  to; there is no UI for it yet (Config settings/menu app is a separate,
+  not-yet-built project).
+* `shell/system/pam/ophone-lock` no longer includes `login`. Its `auth`
+  chain checks the PIN with `pam_exec.so expose_authtok` calling
+  `ophone-pin verify` (the PIN arrives on the child's stdin, again never on
+  argv), stacked with `pam_faillock` exactly the way `system-auth` stacks it
+  around `pam_unix` -- see [Throttling](#throttling-pam_faillock) below.
+  `account` is `pam_permit.so`: there's no shadow record for a PIN, so there
+  is nothing account-side to check.
+
+**Threat model / why this is a real improvement, not just indirection:**
+whoever can *read* `pin-hash` is already running code as the phone's session
+user -- which, given this device's passwordless `wheel` sudo (a separate,
+still-open issue: F1 in the security review), already means root. So this
+file being group-readable by that user (`root:omarchy`, mode `0640` -- see
+below) gives away nothing an attacker with that level of access didn't
+already have. What the separation actually buys: **the PIN can never be used
+to SSH in or sudo, and the account/SSH password can never be brute-forced
+through the lock screen's PIN pad or vice versa.** A wrong guess against one
+never touches the other's throttling state, and a compromise of one secret
+(e.g. the account password, over the network once Wi-Fi lands) doesn't hand
+over the other.
+
+**Why `0640` instead of the `0600` a "root-owned file" first suggests:** PAM
+authentication here runs with the *caller's* privileges -- the shell,
+running as the phone's session user, not root (`pam_exec` has no setuid
+helper the way `pam_unix` has `unix_chkpwd`, and shipping a bespoke
+setuid-root binary just to read one file is a bigger attack surface than the
+group-readable file, and a much heavier review burden, for no real gain
+given the paragraph above). So the file is `root:omarchy 0640`: unreadable to
+any *other* local user, readable to the one process that legitimately needs
+to check it. The stricter alternative -- a small setuid-root verifier binary
+instead of a group-readable file -- is a reasonable next step if this ever
+stops being a single-user device, but isn't needed today; see Non-goals.
+
+This assumes the session user's primary group is per-user, not a shared
+group like `users` -- true for this image's `useradd -U ...` (verified:
+`tools/userland/build-rootfs.sh` in `omarchy-iphone6s`), which is exactly
+what makes `_default_group()` in `ophone-pin` correct by default. If an
+image ever changes that, set `$OPHONE_PIN_GROUP` explicitly rather than
+relying on the invoking user's primary group.
+
+**PIN configured at boot, or not:** `Phone.qml`'s `pinConfigured` reflects
+whether `/etc/omarchy-phone/pin-hash` exists (a `FileView`, not a one-time
+check, so running `ophone-pin set` while the shell is up takes effect
+immediately). The shell only starts `locked: true` when a PIN is configured
+(see [Idle auto-lock](#idle-auto-lock) for why this matters -- F4 below).
+
+#### Throttling: pam_faillock
+
+F3 in the security review confirmed `pam_faillock` was present (via the
+`login` chain) and working. Dropping `include login` must not drop that.
+`ophone-lock`'s `auth` chain stacks `pam_faillock.so preauth` /
+`authfail` / `authsucc` around the `pam_exec` line, the same shape
+`/etc/pam.d/system-auth` uses around `pam_unix`. The one wrinkle: the
+default tally directory, `/run/faillock`, is `root:root 0755` -- writable
+only by root, but this whole chain now runs as the unprivileged session
+user, so `pam_faillock` would silently no-op (fail *open*, not closed) if
+told to use it. It's pointed instead at `/run/omarchy-phone/faillock`
+(`root:<user> 0770`, created by `shell/system/tmpfiles.d/omarchy-phone.conf`
+-- see `shell/system/README.md`), a separate tally from the login/SSH one,
+with explicit `deny=5 unlock_time=300` on every line (so the image can't
+silently change the effective throttling by editing `/etc/security/faillock.conf`
+without also touching this file). `sudo faillock --user <user> --dir
+/run/omarchy-phone/faillock --reset` clears a lockout.
+
+**Next step, not done here:** hooking `ophone-pin set` up to an actual
+Omarchy settings/menu UI item ("Change PIN"); today it's a command line
+tool, run once during device provisioning.
+
+#### PAM wiring: LockAuth, not a PamContext inside WlSessionLock
+
+The lock screen's PAM call is `qs/Services/LockAuth.qml`, a singleton, not a
+`PamContext` declared inline in `LockScreen.qml`. This is a real bug found
+while hardening this feature, not a style choice: `WlSessionLock`'s default
+property is a single `Component` (its per-output `surface`), so *any* plain
+object declared as its direct child other than the one
+`WlSessionLockSurface` -- a `PamContext`, a `Connections`, anything -- gets
+swept into that Component too. The practical effect: the object still
+exists and its own internal bindings work, but a function defined directly
+on `WlSessionLock` (like the old `tryUnlock`) cannot see an id declared
+inside that swept-in Component (`pam is not defined`, a `ReferenceError`,
+at runtime only -- silent until exercised), and a `Connections` swept in the
+same way never fires at all, with no error whatsoever. Both were previously
+unreachable: the preview's `dryRun` shortcut always returned before calling
+into PAM, so nothing had ever run this code path in this preview until
+`$OPHONE_PAM_DIR` was added for this task's verification. `LockScreen.qml`'s
+root is now a plain `Item` wrapping `WlSessionLock` (whose only child is the
+`WlSessionLockSurface`) and a sibling `Connections` targeting `LockAuth`; a
+singleton also fixes a second latent bug the same mechanism caused: a
+`PamContext` swept into a per-output `Component` would have been
+re-instantiated once per output, running a separate, independent
+authentication attempt per screen on any future multi-monitor device.
+
+**Verified end to end** (see the top-level report for the exact commands):
+using `$OPHONE_PAM_DIR` pointed at a scratch directory with a real
+`ophone-lock` service file (absolute paths, `pam_exec.so expose_authtok
+... ophone-pin verify <path>`, `pam_faillock.so ... dir=<path>`), a PIN set
+with `ophone-pin set`, and the preview started with `$OPHONE_PIN_FILE`
+pointing at that same hash file:
+
+* correct PIN -> `ophone-ctl isLocked` -> `false`;
+* wrong PIN -> stays `true`;
+* 5 wrong PINs (`faillock --user <user> --dir <path>` shows exactly 5 tally
+  entries -- `pam_faillock` correctly tallies as the unprivileged session
+  user once given a directory it can write to), then the *correct* PIN ->
+  still `true`, and the tally count is **unchanged** at 5 (the `requisite
+  preauth` line denies before the `pam_exec`/`authfail` lines ever run, so a
+  denied-by-lockout attempt adds no new entry) -- `deny=5` is really
+  blocking a correct PIN, not just coincidentally failing;
+* `faillock --user <user> --dir <path> --reset`, then the correct PIN again
+  -> `false`.
+
+This is the whole point of the F2/F3 fix demonstrated live: a PIN
+independent of the account password, actually throttled.
+
+### Idle auto-lock
+
+F4 in the security review: `Phone.qml` used to default `locked: false`
+unconditionally, with no idle timer anywhere in the shell -- a freshly
+booted (or rebooted) phone came up fully unlocked until someone pressed
+power once, and stayed unlocked forever after that if nobody did.
+
+The fix has two parts, both in `Phone.qml`:
+
+* **Boot lock.** `locked` starts `true` whenever a PIN is configured (see
+  [Lock screen PIN](#lock-screen-pin)), and stays `false` only when there is
+  genuinely no PIN to unlock with -- so this can never brick a freshly
+  flashed, not-yet-provisioned device. The preview (`dryRun`) always boots
+  unlocked, so none of the existing scenarios changed.
+* **Idle timer.** An `IdleMonitor` (`Quickshell.Wayland`, wrapping
+  `ext-idle-notify-v1`) locks the screen (if a PIN is configured) and blanks
+  it (always, even without a PIN -- it's still worth the power saving) after
+  `Config.idleLockSeconds` (default 180s) of no input, or
+  `$OPHONE_IDLE_SECONDS` if set. This is the same protocol `hypridle`/
+  `swayidle` use; Quickshell exposes it directly, so there's no separate
+  `hypridle` process or config file to keep in sync with the shell's own
+  idea of "locked" -- one fewer moving part, and consistent with this
+  codebase already leaning on `Quickshell.Wayland` for `WlSessionLock`
+  rather than a separate lock binary. `respectInhibitors: true` is set for
+  when something (e.g. a future video-call app) creates a
+  `zwp_idle_inhibitor_v1`; nothing does yet.
+
+Waking the screen is deliberately still power-key-only
+(`key_press_enables_dpms = false` / `mouse_move_enables_dpms = false` in
+`hyprland.lua`, unchanged) -- an idle timeout that also woke on any input
+would defeat the point of locking after inactivity.
+
+**A units bug was caught here during verification, not shipped:**
+`IdleMonitor.timeout` is **seconds** (confirmed with a from-scratch
+standalone QML file: `timeout: 3` logs `Created ... IdleNotification(...)
+with timeout: 3000` -- Quickshell's own debug line, `3000` being its
+internal milliseconds -- and "has been marked idle" fires within the next
+few seconds). The first version of this code multiplied by 1000 (treating
+the property as if it took milliseconds), which would have shipped a
+default idle timeout of 180,000 seconds (50 hours) -- an idle-lock that,
+for all practical purposes, never locks. Fixed by removing the multiply;
+`Phone.qml`'s `timeout` binding now passes `Config.idleLockSeconds` /
+`$OPHONE_IDLE_SECONDS` straight through.
+
+**Verified end to end** after the fix: with a PIN configured
+(`$OPHONE_PIN_FILE` pointing at a real hash) and `$OPHONE_IDLE_SECONDS=4`,
+starting the preview and waiting, completely hands-off (no `qs ipc`/`hyprctl`
+calls at all -- those count as activity to Hyprland's idle tracking and
+would rearm the timer), `ophone-ctl isLocked` read `true` after the wait.
+
+### Bluetooth pairing confirmation
+
+F5/F6 in the security review: with no application agent registered
+anywhere in the image, `bluetoothd` falls back to its own built-in agent,
+which has I/O capability `NoInputNoOutput` -- it auto-accepts "Just Works"
+pairing (and the closely related no-passkey `RequestAuthorization` path)
+from anything in range, with no on-screen confirmation at all. Combined with
+this device's passwordless `wheel` sudo, a trusted Bluetooth keyboard is
+keystroke injection into a root shell; the `driver/bluetooth-adv-fix`
+bring-up log in `omarchy-iphone6s` demonstrates exactly that pairing
+succeeding today.
+
+`shell/bin/ophone-btagentd` is a small Python daemon (GLib/`python-gobject`,
+already a dependency of the Phone app) that:
+
+1. Registers a **`KeyboardDisplay`** `org.bluez.Agent1` at
+   `/org/omarchy/phone/agent` on the system bus and calls
+   `RequestDefaultAgent`, replacing the fallback agent.
+2. On `RequestConfirmation`, `RequestAuthorization`, or `AuthorizeService` --
+   the three calls that would otherwise auto-accept -- sends a normal
+   freedesktop notification (`urgency: critical`, actions `pair`/`reject`,
+   `resident: true`) through the session bus and **holds the D-Bus call
+   open** until the user taps a button or `$OPHONE_BT_TIMEOUT` (default 30s)
+   elapses. A timeout, a `reject` tap, or the notification being dismissed
+   without a tap all deny (`org.bluez.Error.Rejected`) -- deny by default,
+   the same posture as the lock screen requiring an explicit swipe before
+   the PIN pad even shows. See `docs/shell/INTEGRATION.md` "Bluetooth
+   pairing confirmation": this is a plain notification, nothing
+   shell-specific, so it follows the same locked-phone privacy rule as
+   everything else -- while locked, it shows only as a count, so a request
+   made against a locked phone simply times out unanswered.
+3. `DisplayPasskey`/`DisplayPinCode` (bluetoothd asking *this* phone to show
+   a code) need no accept/reject -- their security comes from the peer
+   having to type back a code it can only know by reading this phone's
+   screen, which is itself the mitigation for the BLE-keyboard scenario
+   above (pairing a keyboard-only peripheral against a `KeyboardDisplay`
+   agent negotiates Passkey Entry, not Just Works).
+4. `RequestPasskey`/`RequestPinCode` (this phone being asked to *provide* a
+   code) are refused rather than silently accepted or fabricated -- there's
+   no on-screen numeric entry UI yet; see Non-goals.
+
+`shell/system/bluetooth/main.conf` complements the agent: not
+discoverable/pairable at rest (`Discoverable = false`, `Pairable = false`,
+`PairableTimeout = 180`), `JustWorksRepairing = never`, and `Privacy =
+device` for a resolvable LE address instead of the fixed hardware one. This
+shrinks the window an attacker has to try in the first place; the agent is
+what actually closes F5/F6, since the built-in fallback agent would honor
+these same settings and still auto-accept whatever pairing it is allowed to
+see.
+
+`shell/system/systemd/ophone-btagentd.service` (a user unit, `systemctl
+--user enable --now`) starts it with the graphical session -- see
+`shell/system/README.md`. **What the image side needs to add:** the
+`ophone-btagentd.service` unit installed and enabled, and
+`bluetooth/main.conf` installed to `/etc/bluetooth/main.conf`; no new
+packages (`python-gobject`/`python` and `bluez`/`bluez-utils` are already in
+`packages.txt`).
 
 ### On-screen keyboard
 
@@ -182,9 +433,52 @@ next steps).
 ### Theme
 
 `Theme` singleton: a built-in dark palette, overridden by
-`~/.local/state/omarchy/current/theme/colors.toml` when present (Omarchy's theme
-state), so `omarchy-theme-set` restyles the phone too. `u` is the layout unit and
-`font(n)` gives type sizes.
+`$XDG_STATE_HOME/omarchy/current/theme/colors.toml` (falling back to
+`$HOME/.local/state`, same default `omarchy-theme-set` uses) when present, so
+`omarchy-theme-set` restyles the phone too -- **live**, without restarting
+the shell. `u` is the layout unit and `font(n)` gives type sizes.
+
+Getting the live part right took a second FileView. `omarchy-theme-set`
+swaps a theme with `rm -rf current/theme; mv next-theme current/theme` (see
+`/usr/share/omarchy/bin/omarchy-theme-set`): the `theme/` directory's inode
+is destroyed and a new one put in its place. A `FileView` watching
+`current/theme/colors.toml` (or the `theme/` directory itself) holds an
+inotify watch on that now-dead inode -- the watch fires once (`IN_IGNORED`)
+and then never again, so the very first theme swap after the shell starts
+silently stops live reload from working, permanently, until the shell is
+restarted. That's the bug this task fixes.
+
+The fix watches something that survives the swap instead:
+`current/theme.name`, a plain marker file `omarchy-theme-set` writes with a
+`>` redirect (`echo "$THEME_NAME" >current/theme.name`) -- an in-place
+truncate-and-write, not a replace, so its inode (and inotify watch) survives
+every swap. `Theme.qml` now has two `FileView`s: one on `theme.name`, with
+`watchChanges: true`, whose `onFileChanged` calls `reload()` on *itself* and
+on the second `FileView` (on `colors.toml`, not directly watched at all).
+That second read is a plain re-open by path, so it always picks up whatever
+`colors.toml` exists right now regardless of the directory swap underneath
+it -- the broken-watch problem only had to be solved once, for the file
+that doesn't have it.
+
+Building the path from `$XDG_STATE_HOME` rather than always `$HOME` is a
+side benefit for testability, not just correctness: `shell/preview/run.sh`
+already runs with a private `XDG_STATE_HOME`, so the preview can simulate a
+theme swap in its own scratch directory instead of (accidentally) reading
+the real desktop session's live theme.
+
+**Verified** (see the top-level report for the exact commands):
+`shell/preview/run.sh` gained a test-only `OPHONE_SEED_THEME_DIR`/
+`OPHONE_SEED_THEME_NAME` pair that seeds a theme into the private
+`XDG_STATE_HOME` before Hyprland/qs start, so a theme can be present *at
+boot* -- the actual bug scenario, not the "appears for the first time"
+case. Seeded a first theme (`background = "#111111"`), started the preview,
+confirmed it applied at startup; then, against the running shell, performed
+the exact `rm -rf current/theme; mv next-theme current/theme; echo
+theme-two >current/theme.name` sequence `omarchy-theme-set` does, with a
+second theme (`background = "#004400"`); then a third
+(`background = "#220044"`). Confirmed each swap applied live, without
+restarting `qs`, by (temporarily, for this verification) logging
+`root.background` from the `colorsFile` `onLoaded` handler.
 
 ### App integration
 
@@ -199,14 +493,19 @@ the shell turns it into a full-screen call surface.
 shell/hypr/hyprland.lua        phone Hyprland config (Lua, Hyprland 0.56)
 shell/hypr/devices/*.lua       per-device monitor/touch/key profile
 shell/qs/shell.qml             QuickShell entry point
-shell/qs/Commons/Theme.qml     palette + scale unit
+shell/qs/Commons/Theme.qml     palette + scale unit; live-reloads across omarchy-theme-set
 shell/qs/Surfaces/*.qml        StatusBar, HomeScreen, NavBar, Shade, Switcher, ...
-shell/qs/Services/*.qml        Phone (state + actions), Notifs (daemon), Config (shell.json)
+shell/qs/Services/*.qml        Phone (state + actions, idle/boot lock), Notifs (daemon), Config (shell.json),
+                                LockAuth (PIN authentication, PAM)
 shell/qs/Widgets/*.qml         StatusRow, NotificationCard, CallCard, PinPad, Tile, ...
 shell/bin/ophone-ctl           hardware-key / script entry point -> qs ipc
 shell/bin/ophone-sys           system actions (Wi-Fi, BT, brightness, ...), dry-run aware
+shell/bin/ophone-pin           hash/verify/set the lock-screen PIN (PAM calls `verify`)
+shell/bin/ophone-btagentd      real BlueZ pairing agent (on-screen Pair/Reject)
 shell/preview/run.sh           isolated nested preview + screenshot scenarios
-shell/system/                  logind drop-in, PAM file (installed by the image, not the shell)
+shell/tests/                  unit tests for ophone-pin and ophone-btagentd (shell/tests/run.sh)
+shell/system/                  logind drop-in, PAM file, bluetooth/main.conf, systemd unit,
+                                tmpfiles.d rule (installed by the image, not the shell)
 ```
 
 ## Preview harness
@@ -265,3 +564,14 @@ Keyboard scenarios (`run.sh keys` runs them all):
 * Inline replies in the shade (the daemon already advertises support).
 * Fingerprint unlock (Touch ID isn't supported on this hardware under Linux).
 * Measure memory and frame time on the real device, and trim anything costly.
+* A Settings/menu UI entry for "Change PIN" (today: `sudo ophone-pin set` at
+  a shell).
+* A setuid-root PIN verifier (or `pam_pwdfile`, not packaged for Arch Linux
+  ARM) instead of the group-readable `pin-hash` file, if this ever stops
+  being a single-owner device with passwordless sudo already gating the
+  session user.
+* On-screen numeric entry for `RequestPasskey`/`RequestPinCode` (this phone
+  being asked to *provide* a code to a peer) -- refused today, not
+  implemented.
+* A "pairing mode" toggle (bounded-time `Discoverable`/`Pairable`) in the
+  shade/settings, now that `bluetooth/main.conf` turns both off by default.

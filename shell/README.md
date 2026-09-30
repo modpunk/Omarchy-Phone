@@ -7,6 +7,27 @@ notes: [docs/shell/DESIGN.md](../docs/shell/DESIGN.md). App integration:
 [docs/shell/INTEGRATION.md](../docs/shell/INTEGRATION.md). Files the device
 image installs: [system/README.md](system/README.md).
 
+## Security
+
+Hardened per `~/Work/hoolock-iphone5s/notes/security-review.md` (F2-F6):
+see [DESIGN.md](../docs/shell/DESIGN.md#lock-screen-pin) for the full
+threat model. In short:
+
+* **Lock screen PIN** (`bin/ophone-pin`, `system/pam/ophone-lock`): its own
+  secret, independent of the account/SSH/sudo password, hashed with
+  `scrypt` in `/etc/omarchy-phone/pin-hash`, checked via `pam_exec` with
+  `pam_faillock` throttling. `sudo ophone-pin set` to provision one.
+* **Idle auto-lock** (`Phone.qml`): locks (if a PIN is configured) and
+  blanks the screen after `Config.idleLockSeconds` (default 180s) idle, via
+  Hyprland's `ext-idle-notify-v1`. Boots locked whenever a PIN is
+  configured, never unlocked-by-default the way it used to be.
+* **Bluetooth pairing agent** (`bin/ophone-btagentd`): a real `KeyboardDisplay`
+  BlueZ agent that requires an explicit on-screen Pair/Reject tap, replacing
+  bluetoothd's default agent, which auto-accepted every Just-Works pairing.
+
+Tests: `shell/tests/run.sh` (unit tests for `ophone-pin` and
+`ophone-btagentd`, on a private D-Bus session bus).
+
 Preview on a desktop (nested and headless, own runtime dir; nothing shows on
 or touches the host session):
 
