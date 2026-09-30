@@ -55,6 +55,9 @@ STATUS_TEXT = {"answered": "", "missed": "Missed", "rejected": "Declined", "bloc
                "voicemail": "Voicemail", "cancelled": "Cancelled", "busy": "Busy", "failed": "Failed",
                "no_answer": "No answer", "calling": "", "ringing": ""}
 ACTION_LABELS = [("ring", "Ring"), ("silent", "Silence"), ("voicemail", "Send to voicemail"), ("reject", "Reject")]
+TRANSPORTS = ["udp", "tcp", "tls"]
+REG_STATE_LABELS = {"registered": "Registered", "registering": "Registering…", "connecting": "Connecting…",
+                    "failed": "Failed", "no_account": "No account", "offline": "Offline"}
 
 
 def ago(ts: float) -> str:
@@ -75,6 +78,15 @@ def duration(sec: float) -> str:
 
 def pretty(addr: str, region="US") -> str:
     return numbers.format_number(addr, region) if addr.startswith("+") else addr
+
+
+def registration_text(reg: dict) -> str:
+    bits = [REG_STATE_LABELS.get(reg.get("state"), reg.get("state") or "Unknown")]
+    if reg.get("detail"):
+        bits.append(reg["detail"])
+    if reg.get("state") == "failed" and reg.get("reason"):
+        bits.append(reg["reason"])
+    return " · ".join(bits)
 
 
 def icon_button(icon, tooltip, cb, *css):
@@ -982,8 +994,12 @@ class PhoneWindow(Adw.ApplicationWindow):
         st = self.rpc("state") or {}
         for b in st.get("backends", []):
             reg = (st.get("registration") or {}).get(b["id"], {})
-            acct.add(Adw.ActionRow(title=b["name"], subtitle=GLib.markup_escape_text(
-                ("Connected · " if reg.get("ok") else "Offline · ") + (reg.get("detail") or ""))))
+            row = Adw.ActionRow(title=b["name"], subtitle=GLib.markup_escape_text(registration_text(reg)))
+            if b["id"] == "sip":
+                row.add_suffix(icon_button("view-refresh-symbolic", "Check registration now",
+                                           lambda: (self.rpc("registration", refresh=True),
+                                                    self.toast("Checking registration…"))))
+            acct.add(row)
         own = Adw.EntryRow(title="My number", text=s.get("own_number", ""), show_apply_button=True)
         own.connect("apply", lambda r: self.rpc("set", key="own_number",
                                                 value=numbers.normalize(r.get_text(), self.region) or r.get_text()))
@@ -992,6 +1008,20 @@ class PhoneWindow(Adw.ApplicationWindow):
         region.connect("apply", lambda r: self.rpc("set", key="region", value=r.get_text().strip().upper()[:2]))
         acct.add(region)
         page.add(acct)
+
+        sipg = Adw.PreferencesGroup(title="SIP account", description="Add a SIP account to place and receive"
+                                    " calls over Wi-Fi through a real phone number, no cellular modem needed.")
+        sipacct = self.rpc("sip_account")
+        sip_row = Adw.ActionRow(
+            title="Not configured" if not sipacct else GLib.markup_escape_text(sipacct.get("display_name")
+                                                                                or sipacct["username"]),
+            subtitle="Tap to add a SIP account" if not sipacct else
+            GLib.markup_escape_text(f"{sipacct['username']}@{sipacct['domain']} · {sipacct['transport'].upper()}"),
+            activatable=True)
+        sip_row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+        sip_row.connect("activated", lambda *_a: self.open_sip_account())
+        sipg.add(sip_row)
+        page.add(sipg)
 
         peers = [p for p in (self.rpc("directory") or []) if p.get("profile") != st.get("profile")]
         if peers or "loopback" in [b["id"] for b in st.get("backends", [])]:
@@ -1013,6 +1043,78 @@ class PhoneWindow(Adw.ApplicationWindow):
         hist.add(clr)
         page.add(hist)
         self._push("Settings", "settings", page)
+
+    # ------------------------------------------------------------ SIP account
+    def open_sip_account(self):
+        acc = self.rpc("sip_account") or {}
+        page = Adw.PreferencesPage()
+
+        g = Adw.PreferencesGroup(title="SIP account", description="Registers this phone with a SIP provider or"
+                                 " your own PBX (Asterisk, FreeSWITCH…) so it can place and receive calls over"
+                                 " Wi-Fi. The password is kept in the system keyring, never in a config file.")
+        name_row = Adw.EntryRow(title="Display name", text=acc.get("display_name", ""))
+        user_row = Adw.EntryRow(title="Username", text=acc.get("username", ""))
+        domain_row = Adw.EntryRow(title="Domain or registrar", text=acc.get("domain", ""))
+        proxy_row = Adw.EntryRow(title="Outbound proxy (optional)", text=acc.get("proxy", ""))
+        pass_row = Adw.PasswordEntryRow(
+            title="Password (leave blank to keep the current one)" if acc.get("has_password") else "Password")
+        transport_row = Adw.ComboRow(title="Transport", model=Gtk.StringList.new(["UDP", "TCP", "TLS"]))
+        transport_row.set_selected(TRANSPORTS.index(acc["transport"]) if acc.get("transport") in TRANSPORTS else 0)
+        for r in (name_row, user_row, domain_row, proxy_row, pass_row, transport_row):
+            g.add(r)
+        page.add(g)
+
+        if acc:
+            st = self.rpc("registration", backend="sip") or {}
+            status = Adw.PreferencesGroup()
+            status.add(Adw.ActionRow(title="Registration", subtitle=GLib.markup_escape_text(registration_text(st))))
+            page.add(status)
+
+        def save(*_a):
+            data = {"display_name": name_row.get_text().strip(), "username": user_row.get_text().strip(),
+                   "domain": domain_row.get_text().strip(), "proxy": proxy_row.get_text().strip(),
+                   "transport": TRANSPORTS[transport_row.get_selected()]}
+            r = self.rpc("save_sip_account", account=data, password=pass_row.get_text() or None)
+            if r is None:
+                return   # rpc() already toasted the validation/keyring error
+            self.toast("SIP account saved")
+            self.nav.pop()
+            self.open_settings()
+
+        def confirm_remove(*_a):
+            d = Adw.AlertDialog(heading="Remove SIP account?",
+                                body="This also deletes the saved password. Calling stops working until you"
+                                     " add an account again.")
+            d.add_response("cancel", "Cancel")
+            d.add_response("remove", "Remove")
+            d.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+            d.set_close_response("cancel")
+
+            def done(dlg, res):
+                if dlg.choose_finish(res) == "remove":
+                    self.rpc("delete_sip_account")
+                    self.toast("SIP account removed")
+                    self.nav.pop()
+                    self.open_settings()
+            d.choose(self, None, done)
+
+        if acc:
+            actions = Adw.PreferencesGroup()
+            rm = Adw.ButtonRow(title="Remove SIP account")
+            rm.add_css_class("destructive-action")
+            rm.connect("activated", confirm_remove)
+            actions.add(rm)
+            page.add(actions)
+
+        tv = Adw.ToolbarView()
+        hb = Adw.HeaderBar()
+        sb = Gtk.Button(label="Save")
+        sb.add_css_class("suggested-action")
+        sb.connect("clicked", save)
+        hb.pack_end(sb)
+        tv.add_top_bar(hb)
+        tv.set_content(page)
+        self._push("SIP account", "sip_account", tv, header=False)
 
     # ============================================================ vCard files
     def import_vcard(self):
@@ -1080,6 +1182,12 @@ class PhoneWindow(Adw.ApplicationWindow):
             self.refresh_favorites()
         if t in ("settings", "dnd"):
             self.refresh_settings()
+        if t == "registration" and ev.get("backend") == "sip" and ev.get("state") != getattr(self, "_last_sip_reg", None):
+            self._last_sip_reg = ev.get("state")
+            if ev.get("state") == "failed":
+                self.toast(f"SIP registration failed: {ev.get('reason') or ev.get('detail') or 'unknown error'}")
+            elif ev.get("state") == "registered":
+                self.toast("SIP: Registered")
         if t == "show":
             if ev.get("page") in ("favorites", "recents", "contacts", "keypad"):
                 self.select_tab(ev["page"])
@@ -1140,7 +1248,10 @@ class PhoneApp(Adw.Application):
         opts = cmdline.get_options_dict().end().unpack()
         args = cmdline.get_arguments()[1:]
         win = self._ensure_window()
-        if opts.get("page"):
+        if opts.get("page") == "sip_account":
+            win.open_settings()
+            win.open_sip_account()
+        elif opts.get("page"):
             win.select_tab(opts["page"])
         for a in args:
             if a.startswith("tel:") or numbers.first_number(a, win.region):

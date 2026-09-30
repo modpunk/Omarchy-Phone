@@ -23,11 +23,12 @@ import sys
 
 from gi.repository import Gio, GLib
 
-from . import numbers
+from . import keyring, numbers
 from .audio import AudioRouter
 from .backends import BackendError, create
 from .calls import CallManager
 from .notify import Notifier
+from .sip_account import SipAccount, to_baresip_line, validate
 from .store import Store
 from .vcard import Contact
 
@@ -72,11 +73,28 @@ class PhoneService:
         if baresip:  # host:port of baresip's ctrl_tcp
             host, _, port = baresip.rpartition(":")
             config.update(host=host or "127.0.0.1", port=int(port))
+        if backend == "sip":
+            line = self._sip_account_line()
+            if line:
+                config["account_line"] = line
         backends = [create(backend, config)]
         if backend != "loopback":
             backends.append(create("loopback", {"profile": profile, "number": self.store.get("own_number"),
                                                 "display": display or profile}))
         self.mgr = CallManager(self.store, backends, notifier=self.notifier, audio=self.audio, emit=self.broadcast)
+
+    def _sip_account_line(self) -> str | None:
+        """Rebuild the baresip account line from Store (non-secret fields) + the keyring (password),
+        for the "sip" backend to provision at connect. Never persisted anywhere as a whole line."""
+        saved = self.store.get("sip_account")
+        if not saved:
+            return None
+        try:
+            password = keyring.get_password(self.profile) or ""
+        except keyring.KeyringError as e:
+            self.broadcast({"type": "error", "detail": f"SIP password unavailable: {e}"})
+            return None
+        return to_baresip_line(SipAccount.from_dict(saved), password)
 
     # ------------------------------------------------------------ events
     def broadcast(self, event: dict):
@@ -270,6 +288,8 @@ class PhoneService:
         return self.store.settings()
 
     def m_set(self, key, value):
+        if key == "sip_account":
+            raise ValueError("use save_sip_account / delete_sip_account (the password can't go through set)")
         self.store.set(key, value)
         self._changed("settings")
         if key == "dnd":
@@ -285,6 +305,56 @@ class PhoneService:
         return [{"start": m.start, "end": m.end, "raw": m.raw, "e164": m.e164,
                  "display": numbers.format_number(m.e164, self.store.get("region"))}
                 for m in numbers.find_numbers(text, self.store.get("region"))]
+
+    # ------------------------------------------------------------ methods: SIP account, registration
+    def m_registration(self, backend=None, refresh=False):
+        if refresh:
+            self.mgr.refresh_registration(backend)
+        return self.mgr.registration if backend is None else self.mgr.registration.get(backend, {})
+
+    def m_sip_account(self):
+        saved = self.store.get("sip_account")
+        return dict(saved) if saved else None
+
+    def m_save_sip_account(self, account, password=None):
+        existing = self.store.get("sip_account") or {}
+        acc = SipAccount.from_dict(account)
+        if not acc.domain and "@" in acc.username:
+            acc.username, acc.domain = acc.username.split("@", 1)
+        has_password = bool(existing.get("has_password")) and not password  # blank password = keep it
+        errors = validate(acc, require_password=not has_password, password=password)
+        if errors:
+            raise ValueError("; ".join(errors))
+        if password:
+            keyring.set_password(self.profile, password)
+            has_password = True
+        d = acc.to_dict()
+        d["has_password"] = has_password
+        self.store.set("sip_account", d)
+        self._changed("settings")
+        self._push_sip_account()
+        return d
+
+    def m_delete_sip_account(self):
+        if self.store.get("sip_account"):
+            self.store.set("sip_account", None)
+            try:
+                keyring.clear_password(self.profile)
+            except keyring.KeyringError as e:
+                self.broadcast({"type": "error", "detail": str(e)})
+            if "sip" in self.mgr.backends:
+                self.mgr.clear_account("sip")
+            self._changed("settings")
+
+    def _push_sip_account(self):
+        """Push the just-saved account to a live "sip" backend now, instead of waiting for the
+        next daemon restart to pick it up via `_sip_account_line()`."""
+        b = self.mgr.backends.get("sip")
+        if not b:
+            return
+        line = self._sip_account_line()
+        if line:
+            self.mgr.apply_account("sip", line)
 
     def shutdown(self):
         self.mgr.stop()

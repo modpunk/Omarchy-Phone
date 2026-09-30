@@ -51,6 +51,9 @@ DEFAULT_SETTINGS = {
     "neighbor_spoof_filter": True,
     "clipboard_detect": False,
     "backend": "loopback",
+    # Non-secret SIP account fields ({display_name, username, domain, proxy, transport, has_password}
+    # or None). The password itself never lives here; see omarchy_phone.keyring.
+    "sip_account": None,
 }
 
 

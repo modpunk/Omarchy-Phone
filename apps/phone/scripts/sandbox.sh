@@ -1,7 +1,8 @@
 #!/bin/sh
 # Run a command inside a throwaway Omarchy Phone sandbox: private D-Bus session, temp data
-# and runtime dirs, no notifications or ringtone, no audio route switching. Nothing touches
-# ~/.config, ~/.local/share or the real session bus.
+# and runtime dirs, no notifications or ringtone, no audio route switching, an in-process stand-in
+# for the SIP account's keyring entry (the private session bus has no Secret Service to talk to
+# anyway). Nothing touches ~/.config, ~/.local/share, the real session bus or the real keyring.
 #   scripts/sandbox.sh sh -c 'bin/phoned & sleep 1; bin/phonectl state'
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -19,6 +20,6 @@ trap cleanup EXIT
 cd "$here"
 env XDG_RUNTIME_DIR="$tmp/run" XDG_DATA_HOME="$tmp/data" \
     OMARCHY_PHONE_QUIET=1 OMARCHY_PHONE_NO_NOTIFY=1 OMARCHY_PHONE_AUDIO_DRYRUN=1 \
-    OMARCHY_PHONE_SANDBOX="$tmp" \
+    OMARCHY_PHONE_SANDBOX="$tmp" OMARCHY_PHONE_KEYRING=memory \
     ADW_DISABLE_PORTAL=1 GDK_DEBUG=no-portals GIO_USE_VFS=local GTK_A11Y=none \
     dbus-run-session -- "$@"

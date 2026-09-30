@@ -35,4 +35,9 @@ bin/phonectl --profile bob answer; sleep 0.3
 shot incall
 bin/phonectl call merge "{}" >/dev/null; sleep 0.3
 shot groupcall
+bin/phonectl hangup >/dev/null 2>&1; bin/phonectl --profile bob hangup >/dev/null 2>&1; sleep 0.2
+shot sipaccount --page sip_account
+bin/phonectl call save_sip_account "{\"account\": {\"display_name\": \"Jane Doe\", \"username\": \"jane\", \"domain\": \"pbx.example.org\", \"proxy\": \"proxy.example.org\", \"transport\": \"tcp\"}, \"password\": \"hunter2\"}" >/dev/null
+sleep 0.2
+shot sipaccount-filled --page sip_account
 ' sh "$out"
