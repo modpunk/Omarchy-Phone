@@ -17,6 +17,7 @@ ShellRoot {
   NavBar {}
   Keyboard {}
   Banner {}
+  TapToCallBanner {}
   Osd {}
   Shade {}
   Switcher {}
@@ -75,6 +76,18 @@ ShellRoot {
     function answerCall(): void { Notifs.answer() }
     function declineCall(): void { Notifs.decline() }
     function clearNotifications(): void { Notifs.clearAll() }
+    // Preview/test helpers for tap-to-call (docs/phone/DESIGN.md §4.1):
+    // JSON list of numbers currently detected in the clipboard, and
+    // whether the chip is actually showing (false while locked, even with
+    // numbers detected -- see TapToCallBanner.qml).
+    function tapToCallNumbers(): string { return JSON.stringify(NumberDetect.current) }
+    function tapToCallVisible(): bool { return NumberDetect.current.length > 0 && !Phone.locked }
+    // Simulates tapping the first chip, without needing a synthetic touch
+    // event in the preview: the same call TapToCallCard's onDial makes.
+    function tapToCallDial(): void {
+      if (NumberDetect.current.length > 0) Phone.dialNumber(NumberDetect.current[0].uri)
+      NumberDetect.clear()
+    }
     // JSON list of current notifications (for app developers and tests).
     function notifications(): string {
       return JSON.stringify(Notifs.list.map(n => ({ id: n.id, app: n.appName, summary: n.summary, body: n.body,
@@ -83,7 +96,7 @@ ShellRoot {
     }
     // Preview helper: back to a clean home screen. Unlocks only in dry-run mode.
     function reset(): void {
-      Phone.closeOverlays(); Phone.resetKeyboard(); Notifs.hideBanner()
+      Phone.closeOverlays(); Phone.resetKeyboard(); Notifs.hideBanner(); NumberDetect.clear()
       if (Phone.dryRun) { Notifs.clearEverything(); Phone.unlock() }
       Phone.home()
     }

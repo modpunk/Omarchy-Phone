@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Stand-in for apps/phone/bin/omarchy-phone in the shell preview
+# (shell/preview/run.sh sets OPHONE_APPS_PHONE to this directory).
+#
+# The real omarchy-phone is a GTK4 + libadwaita app with its own daemon
+# (phoned); spawning it for real from an automated scenario would leave a
+# window and a daemon running in the private preview session for the rest
+# of the run, same as never actually dialing anything on real hardware here
+# would defeat the point of a shell-only preview. This just records that it
+# was asked to open a tel: URI, the same contract Phone.dialNumber() relies
+# on (see shell/qs/Services/Phone.qml), so a scenario can assert on it.
+echo "omarchy-phone $*" >>"${OPHONE_PREVIEW_DIR:-/tmp}/log/apps.out"

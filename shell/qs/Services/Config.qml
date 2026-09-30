@@ -4,7 +4,8 @@ import Quickshell
 import Quickshell.Io
 
 // User settings: $XDG_CONFIG_HOME/omarchy-phone/shell.json (optional).
-//   { "favorites": ["org.gnome.Calls", "foot", ...], "wallpaper": "/path.jpg" }
+//   { "favorites": ["org.gnome.Calls", "foot", ...], "wallpaper": "/path.jpg",
+//     "tapToCallClipboard": true }
 Singleton {
   id: root
   property var favorites: ["omarchy-phone", "org.omarchy.Phone", "foot", "chromium", "org.gnome.Nautilus", "firefox", "Alacritty"]
@@ -22,6 +23,11 @@ Singleton {
   // the screen (docs/shell/DESIGN.md "Idle auto-lock"). OPHONE_IDLE_SECONDS
   // overrides this for quick testing (shell/preview/run.sh scenarios).
   property int idleLockSeconds: 180
+  // System-wide tap-to-call (docs/phone/DESIGN.md §4.1, Services/NumberDetect.qml):
+  // opt-in and off by default, mirroring the in-app clipboard chip's own
+  // privacy stance ("Clipboard detection (opt-in, off by default for
+  // privacy)"). OPHONE_CLIPBOARD_DIAL=1 overrides this for previews/tests.
+  property bool tapToCallClipboard: false
 
   FileView {
     path: (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/omarchy-phone/shell.json"
@@ -35,6 +41,7 @@ Singleton {
         if (Array.isArray(j.hidden)) root.hidden = root.hidden.concat(j.hidden)
         if (typeof j.wallpaper === "string") root.wallpaper = j.wallpaper
         if (Number.isFinite(j.idleLockSeconds)) root.idleLockSeconds = j.idleLockSeconds
+        if (typeof j.tapToCallClipboard === "boolean") root.tapToCallClipboard = j.tapToCallClipboard
       } catch (e) { console.warn("omarchy-phone: bad shell.json:", e) }
     }
   }

@@ -106,6 +106,8 @@ around `qs -p <shell>/qs ipc call shell <fn>`):
 | `ophone-ctl notifications` | JSON list of current notifications (debugging) |
 | `ophone-ctl answerCall` / `declineCall` | same as tapping the buttons |
 | `ophone-ctl home`, `switcher`, `shade`, `lock`, `keyboard` | navigation |
+| `ophone-ctl tapToCallNumbers` | JSON list of phone numbers currently detected in the clipboard |
+| `ophone-ctl tapToCallVisible` | `true` while the tap-to-call chip is actually showing (false whenever locked, even with numbers detected) |
 
 Silent mode is also written to `$XDG_RUNTIME_DIR/omarchy-phone/silent`
 (`on`/`off`), so you can read it without a process spawn.
@@ -137,3 +139,15 @@ without unlocking first -- it simply times out and is rejected.
   `{ "favorites": ["org.omarchy.Phone", "foot", "chromium"] }`.
 * Set a stable Wayland `app_id` matching the desktop file id, so the switcher
   finds the right icon.
+
+## 7. System-wide tap-to-call
+
+The shell watches the clipboard (opt-in: `Config.tapToCallClipboard` in
+`shell.json`, off by default) with `wl-paste --watch`, re-running `phonectl
+detect` on whatever gets copied. A number it finds shows as a "Call
+<number>?" chip; tapping it hands a `tel:` URI to the Phone app's existing
+`x-scheme-handler/tel` entry point (`org.omarchy.Phone.desktop` /
+`do_command_line()`), the same as any other app opening a `tel:` link would.
+Nothing new to send here -- this is the shell reading what your app already
+put on the clipboard, not something you integrate with directly. See
+[DESIGN.md](DESIGN.md#system-wide-tap-to-call).

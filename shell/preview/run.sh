@@ -5,6 +5,8 @@
 #   shell/preview/run.sh --hold            start the session and wait (Ctrl-C to stop)
 #
 # Scenarios: home notification shade app keyboard switcher osd power settings lock pin call lockcall all
+# tapcall: system-wide tap-to-call (docs/phone/DESIGN.md §4.1) -- wl-copy a
+#   phone number, assert the chip picks it up (and not while locked), tap it.
 # Keyboard scenarios (typed with wtype into the preview): kbhome kbdock kbsearch
 #   kbshade kbnotif kbswitcher kbpower kbpin kbcall, or "keys" for all of them
 # On-screen-keyboard focus scenarios: oskgtk (GTK4 field: auto-show, type
@@ -89,6 +91,17 @@ if [[ ! -x "$SHELL_DIR/bin/ophone-im" || "$SHELL_DIR/im/ophone-im.c" -nt "$SHELL
 fi
 
 export OPHONE_SHELL="$SHELL_DIR" OPHONE_DEVICE=preview OPHONE_DRY_RUN=1
+# Opt-in feature (docs/phone/DESIGN.md §4.1): on for the whole preview
+# session so the "tapcall" scenario can exercise it; a real install leaves
+# it off until the user turns it on (Config.tapToCallClipboard).
+export OPHONE_CLIPBOARD_DIAL="${OPHONE_CLIPBOARD_DIAL:-1}"
+# Dialing (Phone.dialNumber(), Services/Phone.qml) hands off to the real
+# apps/phone/bin/omarchy-phone -- a GTK4 + libadwaita app with its own
+# phoned daemon. Left to the real one, a tap-to-call scenario would spawn
+# it for real inside this private session and leave it running for every
+# scenario after it; this stub records the call instead (see
+# shell/preview/fake-phone-app/bin/omarchy-phone).
+export OPHONE_APPS_PHONE="${OPHONE_APPS_PHONE:-$HERE/fake-phone-app}"
 export QT_QUICK_BACKEND=software QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland
 export HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 HYPRLAND_NO_CRASHREPORTER=1
 
@@ -229,6 +242,36 @@ scenario() {
     kbpower)      reset; bind power-menu; key -k Down; shot 19-kb-power-focus 0.4 ;;
     kbpin)        reset; ctl lock; sleep 0.8; key 1; key 2; wtype 3; shot 20-kb-lock-pin 0 ;;
     kbcall)       reset; incoming_call; sleep 0.8; key -k Right; shot 21-kb-call-focus 0.4 ;;
+    tapcall)
+      reset
+      wl-copy "Call me at +1 212 555 0101, thanks"
+      wait_for tapToCallVisible true || true
+      assert_eq "a number copied to the clipboard shows a tap-to-call chip" "true" "$(ipc tapToCallVisible)"
+      assert_has "the chip carries the detected tel: uri" "tel:+12125550101" "$(ipc tapToCallNumbers)"
+      shot 32-tap-to-call 0.5
+      ctl lock; sleep 0.3
+      assert_eq "the chip is hidden on the lock screen" "false" "$(ipc tapToCallVisible)"
+      assert_has "detection itself isn't cleared by locking, only hidden" "tel:+12125550101" "$(ipc tapToCallNumbers)"
+      shot 33-tap-to-call-locked 0.3
+
+      reset
+      wl-copy "Call me at +1 212 555 0101, thanks"
+      wait_for tapToCallVisible true || true
+      wl-copy "nothing to call here"
+      wait_for tapToCallVisible false || true
+      assert_eq "copying text with no number clears an already-showing chip" "false" "$(ipc tapToCallVisible)"
+
+      reset
+      : >"$LOG/apps.out"
+      wl-copy "Call me at +1 212 555 0101, thanks"
+      wait_for tapToCallVisible true || true
+      ipc tapToCallDial >/dev/null
+      wait_for tapToCallVisible false || true
+      assert_eq "tapping the chip dismisses it" "false" "$(ipc tapToCallVisible)"
+      wait_for_log "omarchy-phone tel:+12125550101" || true
+      assert_has "tapping dials through Phone.dialNumber() -> the Phone app's tel: entry point" \
+        "omarchy-phone tel:+12125550101" "$(cat "$LOG/apps.out")"
+      ;;
     oskgtk)
       reset; clear_apps; oskfield
       wait_for isKeyboardOpen true || true
@@ -276,7 +319,7 @@ scenario() {
     oskemail)     oskcontent email email 29-osk-email "email purpose" ;;
     oskurl)       oskcontent url url 30-osk-url "url purpose" ;;
     oskcontent)   for s in osknum oskphone oskpass oskemail oskurl; do scenario "$s"; done ;;
-    all)          for s in home notification shade app keyboard switcher osd power settings lock pin call lockcall keys oskgtk oskfoot oskcontent; do scenario "$s"; done ;;
+    all)          for s in home notification shade app keyboard switcher osd power settings lock pin call lockcall tapcall keys oskgtk oskfoot oskcontent; do scenario "$s"; done ;;
     *) echo "unknown scenario: $1" >&2; return 1 ;;
   esac
 }

@@ -296,4 +296,15 @@ Singleton {
   function toggleFlashlight() { flashlight = !flashlight; sys(["flashlight", flashlight ? "on" : "off"]) }
   function toggleRotationLock() { rotationLock = !rotationLock; sys(["rotation-lock", rotationLock ? "on" : "off"]) }
   function toggleAirplane() { airplane = !airplane; sys(["airplane", airplane ? "on" : "off"]) }
+
+  // --- tap-to-call (docs/phone/DESIGN.md §4.1; Services/NumberDetect.qml,
+  // Surfaces/TapToCallBanner.qml): the shell has no dialing logic of its
+  // own -- it hands a "tel:+e164" URI to the Phone app's existing entry
+  // point for exactly that (the same one org.omarchy.Phone.desktop's
+  // x-scheme-handler/tel registration uses, and that do_command_line() in
+  // apps/phone/omarchy_phone/ui.py already handles). That opens the keypad
+  // with the number ready to go rather than dialing outright, so a mis-tap
+  // on a chip out here still can't place a call by itself.
+  readonly property string appsPhoneDir: Quickshell.env("OPHONE_APPS_PHONE") || (shellDir + "/../apps/phone")
+  function dialNumber(uri) { Quickshell.execDetached([appsPhoneDir + "/bin/omarchy-phone", uri]) }
 }

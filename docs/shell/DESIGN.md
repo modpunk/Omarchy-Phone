@@ -586,6 +586,43 @@ notifications (`notify-send`, libnotify, any D-Bus client). An incoming call is 
 notification with `category=call.incoming` plus `accept`/`decline` actions, and
 the shell turns it into a full-screen call surface.
 
+### System-wide tap-to-call
+
+`docs/phone/DESIGN.md` §4.1 describes `phonectl detect` turning text into `tel:`
+links "for the shell (e.g. a text-selection action)." The shell side of that
+(`Services/NumberDetect.qml`, `Surfaces/TapToCallBanner.qml`,
+`Widgets/TapToCallCard.qml`) watches the Wayland clipboard:
+
+* **Trigger: clipboard.** `wl-paste --type text --watch` re-runs `phonectl
+  detect` on the clipboard's contents every time they change (`phonectl
+  detect` reads stdin and works without `phoned` running -- see
+  `apps/phone/omarchy_phone/cli.py`). Numbers it finds show as a small
+  "Call <number>?" chip above the nav bar.
+* **Opt-in, off by default**, the same stance the in-app clipboard chip
+  already takes ("Clipboard detection (opt-in, off by default for
+  privacy)" above): nothing is read from the clipboard unless
+  `Config.tapToCallClipboard` is set in `shell.json`, or
+  `OPHONE_CLIPBOARD_DIAL=1` overrides it (used by the preview).
+* **Dialing.** Tapping a chip calls `Phone.dialNumber(uri)`
+  (`Services/Phone.qml`), which hands the `tel:` URI to the Phone app's
+  existing entry point for it -- the same one `org.omarchy.Phone.desktop`'s
+  `x-scheme-handler/tel` registration uses, handled by `do_command_line()`
+  in `apps/phone/omarchy_phone/ui.py`. That opens the keypad with the
+  number ready to go rather than dialing outright, so a mis-tap on the
+  chip still can't place a call by itself (the same shape as the in-app
+  `confirm_call()` safeguard).
+* **Never on the lock screen**: `TapToCallBanner` checks `Phone.locked`,
+  same as every other overlay here. Detection keeps running while
+  locked (nothing is displayed either way), but the chip itself never
+  renders.
+* **Follow-up, not implemented here**: scanning notification bodies
+  (`Services/Notifs.qml`) for numbers too. The clipboard path was the one
+  buildable cleanly with what the shell already has (`wl-paste --watch`,
+  the same external-process idiom `Phone.qml`'s `imWatch` uses for
+  `ophone-im`); scanning every incoming notification body is a separate,
+  noisier surface (most notifications have no phone number in them) and
+  deserves its own opt-in and its own change.
+
 ## Files
 
 ```
@@ -595,8 +632,8 @@ shell/qs/shell.qml             QuickShell entry point
 shell/qs/Commons/Theme.qml     palette + scale unit; live-reloads across omarchy-theme-set
 shell/qs/Surfaces/*.qml        StatusBar, HomeScreen, NavBar, Shade, Switcher, ...
 shell/qs/Services/*.qml        Phone (state + actions, idle/boot lock), Notifs (daemon), Config (shell.json),
-                                LockAuth (PIN authentication, PAM)
-shell/qs/Widgets/*.qml         StatusRow, NotificationCard, CallCard, PinPad, Tile, ...
+                                LockAuth (PIN authentication, PAM), NumberDetect (clipboard tap-to-call)
+shell/qs/Widgets/*.qml         StatusRow, NotificationCard, CallCard, PinPad, Tile, TapToCallCard, ...
 shell/bin/ophone-ctl           hardware-key / script entry point -> qs ipc
 shell/bin/ophone-sys           system actions (Wi-Fi, BT, brightness, ...), dry-run aware
 shell/bin/ophone-pin           hash/verify/set the lock-screen PIN (PAM calls `verify`)
@@ -607,6 +644,8 @@ shell/im/protocol/*.xml        vendored zwp_input_method_unstable_v2 (not in way
 shell/im/Makefile              wayland-scanner + cc -> shell/bin/ophone-im
 shell/preview/run.sh           isolated nested preview + screenshot scenarios
 shell/preview/gtk4-field.py    preview-only stand-in text field (apps/phone doesn't exist yet)
+shell/preview/fake-phone-app/  preview-only stand-in for apps/phone/bin/omarchy-phone (records
+                                tap-to-call dials instead of spawning the real GTK4 app)
 shell/tests/                  unit tests for ophone-pin and ophone-btagentd (shell/tests/run.sh)
 shell/system/                  logind drop-in, PAM file, bluetooth/main.conf, systemd unit,
                                 tmpfiles.d rule (installed by the image, not the shell)
