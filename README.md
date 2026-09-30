@@ -33,6 +33,16 @@ real calls there yet.
 | `apps/phone/` | The Phone app (GTK4 + libadwaita) and `phoned` daemon: calls over Wi-Fi through a pluggable backend (SIP via baresip first, MatrixRTC planned), contacts with vCard import/export, favourites and groups, recents, keypad, call screening (block/allow/spam lists, unknown and withheld caller policies, do-not-disturb), tap-to-call on detected numbers, voice/video switching, group calls, PipeWire audio routing. | Works on the loopback test backend (48 tests pass); in review in [#3](https://github.com/modpunk/Omarchy-Phone/pull/3) |
 | `brand/` | The Omarchy Phone logo, mark, wordmark, app icons and social preview. | Done |
 
+## Try it on a phone
+
+Everything above runs on real hardware today, tethered over USB: the shell, the home screen, a
+Bluetooth keyboard, and Hyprland with software rendering on an iPhone 6s. Nothing is written to
+the phone's storage, so there's nothing to undo afterwards.
+
+The full walkthrough — building the kernel and userland, DFU, pushing the image, pairing a
+keyboard, and a troubleshooting table — lives in
+[Omarchy-iPhone6s's getting-started guide](https://github.com/modpunk/Omarchy-iPhone6s/blob/main/docs/getting-started.md).
+
 ## Design
 
 - One full-screen app at a time; everything scales from the screen width, so other phones get the
