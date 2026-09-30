@@ -83,20 +83,50 @@ class Notifier:
             return os.environ["OMARCHY_PHONE_SHELL"] not in ("0", "")
         return "quickshell" in (self.server or "") or "omarchy" in (self.server or "")
 
+    GENERIC_CALLER = "Incoming call"
+
+    @staticmethod
+    def locked_mode() -> bool:
+        """Whether the device is currently lock-screen-locked, per the shell's lock switch
+        ($XDG_RUNTIME_DIR/omarchy-phone/locked), mirroring the ring/silent switch
+        ($XDG_RUNTIME_DIR/omarchy-phone/silent, see AudioRouter.silent_mode in audio.py) that the
+        shell already writes for `ophone-sys silent on|off`.
+
+        Missing file, unreadable, or anything other than an exact "off" is treated as locked: the
+        safe, privacy-preserving default (docs/phone/DESIGN.md "Privacy and security" -- caller
+        name is shown only if the shell says the device is unlocked). There is currently no shell
+        code that writes this file (shell/bin/ophone-sys has no `locked` case, and Phone.qml's
+        `lock()`/`unlock()` don't call it) -- see docs/phone/API.md "Shell hooks" for the follow-up
+        this app-side plumbing needs on the shell side.
+        """
+        path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "omarchy-phone", "locked")
+        try:
+            with open(path) as f:
+                return f.read().strip() != "off"
+        except OSError:
+            return True
+
     def incoming(self, call_id: str, who: str, number: str = "", detail: str = "", video: bool = False,
                  silent: bool = False):
         # action ids follow the shell contract: accept / decline / silence (+ our voicemail)
         actions = ["accept", "Accept", "decline", "Decline", "silence", "Silence",
                    "voicemail", "Voicemail", "default", "Open"]
+        # Lock-screen privacy: the caller name never leaves this process while the device is
+        # locked (or its lock state is unknown) -- neither in the visible summary nor in the
+        # x-ophone-caller hint the shell's full-screen call surface reads. The number is still
+        # shown either way; docs/phone/DESIGN.md only asks that the *name* be gated.
+        private = self.locked_mode()
+        display = self.GENERIC_CALLER if private else who
         body = " · ".join(b for b in (number, "Wi-Fi call", detail) if b)
-        extra = {"x-ophone-caller": who, "x-ophone-number": " · ".join(b for b in (number, detail) if b) or "Wi-Fi call"}
+        extra = {"x-ophone-caller": display, "x-ophone-number": " · ".join(b for b in (number, detail) if b) or "Wi-Fi call"}
         if video:
             extra["x-ophone-video"] = "true"
         if silent:  # screened to "silent": an ordinary card, not the full-screen ringing surface
-            self._notify(call_id, f"Silenced call · {who}", body, actions, urgency=1,
+            title = "Silenced call" if private else f"Silenced call · {display}"
+            self._notify(call_id, title, body, actions, urgency=1,
                          category="call.silenced", resident=True, extra=extra)
             return
-        self._notify(call_id, who, body, actions, urgency=2, category="call.incoming", resident=True, extra=extra)
+        self._notify(call_id, display, body, actions, urgency=2, category="call.incoming", resident=True, extra=extra)
 
     def ongoing(self, call_id: str, who: str, detail: str = ""):
         """Status-bar call pill (category "call"); tapping it invokes "default"."""
