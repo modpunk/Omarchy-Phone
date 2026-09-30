@@ -1,0 +1,59 @@
+name: shell
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - shell/**
+      - .github/workflows/shell.yml
+  pull_request:
+    paths:
+      - shell/**
+      - .github/workflows/shell.yml
+  workflow_dispatch: {}
+
+jobs:
+  lint:
+    name: qmllint + Hyprland --verify-config
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git qt6-declarative quickshell hyprland
+
+      - uses: actions/checkout@v4
+
+      - name: QML syntax check (qmllint)
+        run: |
+          if [ ! -d shell/qs ] || [ -z "$(find shell/qs -name '*.qml' -print -quit)" ]; then
+            echo "shell/qs hasn't merged yet, nothing to lint"
+            exit 0
+          fi
+          QMLLINT=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
+          # Quickshell resolves its own "qs.Foo" module namespace at runtime
+          # (there is no qmldir for it), so qmllint can't follow those imports
+          # and warns on every one of them plus everything that depends on
+          # them transitively. That's expected and not a build failure: this
+          # step is a syntax gate, not a full type-check. Only a genuine
+          # [syntax] error (or anything else qmllint treats as fatal, non-zero
+          # exit) fails the job.
+          find shell/qs -name '*.qml' -print0 | xargs -0 "$QMLLINT" -I /usr/lib/qt6/qml -I shell/qs
+
+      - name: Hyprland config check (--verify-config)
+        run: |
+          if [ ! -f shell/hypr/hyprland.lua ]; then
+            echo "shell/hypr hasn't merged yet, nothing to verify"
+            exit 0
+          fi
+          for device in shell/hypr/devices/*.lua; do
+            name=$(basename "$device" .lua)
+            echo "== device: $name =="
+            rt=$(mktemp -d)
+            chmod 700 "$rt"
+            # Container jobs run as root; Hyprland refuses to start (even to
+            # verify a config) as root unless told it's fine.
+            XDG_RUNTIME_DIR="$rt" OPHONE_SHELL="$PWD/shell" OPHONE_DEVICE="$name" \
+              Hyprland --config shell/hypr/hyprland.lua --verify-config --i-am-really-stupid
+            rm -rf "$rt"
+          done
