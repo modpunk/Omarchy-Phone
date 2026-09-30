@@ -9,7 +9,7 @@ import qs.Widgets
 
 // Pull-down shade: quick settings, brightness, notifications.
 // Phone.shade (0..1) drives it, so it follows the finger while dragging.
-// Keyboard: arrows/Tab move over the 8 tiles, the brightness bar and the
+// Keyboard: arrows/Tab move over the 9 tiles, the brightness bar and the
 // notifications. Enter/Space toggles or opens, Left/Right on the bar changes
 // brightness, Delete dismisses a notification (Shift+Delete: all), Esc closes.
 PanelWindow {
@@ -23,7 +23,7 @@ PanelWindow {
   WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   // Keyboard selection: 0..7 tiles, 8 brightness, 9.. notifications. -1 = none.
-  readonly property int nTiles: 8
+  readonly property int nTiles: 9
   readonly property int brightIdx: nTiles
   property int sel: -1
   readonly property int total: nTiles + 1 + notifList.count
@@ -95,6 +95,7 @@ PanelWindow {
       Tile { glyph: Phone.rotationLock ? "\u{f0478}" : "\u{f0475}"; focused: shade.sel === 5; label: "Rotation"; on: Phone.rotationLock; onToggled: Phone.toggleRotationLock() }
       Tile { glyph: "\u{f030c}"; focused: shade.sel === 6; label: "Keyboard"; on: Phone.keyboardOpen; onToggled: { Phone.toggleKeyboard(); Phone.closeShade() } }
       Tile { glyph: "\u{f033e}"; focused: shade.sel === 7; label: "Lock"; onToggled: Phone.lock() }
+      Tile { glyph: "\u{f0493}"; focused: shade.sel === 8; label: "Settings"; onToggled: Phone.openSettings() }
     }
 
     // Brightness slider

@@ -46,6 +46,10 @@ Singleton {
 
   readonly property string motto: "Vox Libertatis"
   readonly property string productName: "Omarchy Phone"
+  // The shell's own version counter (Settings > About). No tags/releases
+  // exist yet (see docs/CI.md), so this is a plain hand-bumped string, not
+  // derived from git -- bump it by convention when a notable surface ships.
+  readonly property string version: "0.1.0"
 
   // $XDG_STATE_HOME (falling back to $HOME/.local/state, same default the
   // real omarchy-theme-set uses) rather than always $HOME: this also means

@@ -4,7 +4,7 @@
 #   shell/preview/run.sh [scenario ...]   run scenarios, save screenshots, exit
 #   shell/preview/run.sh --hold            start the session and wait (Ctrl-C to stop)
 #
-# Scenarios: home notification shade app keyboard switcher osd power lock pin call lockcall all
+# Scenarios: home notification shade app keyboard switcher osd power settings lock pin call lockcall all
 # Keyboard scenarios (typed with wtype into the preview): kbhome kbdock kbsearch
 #   kbshade kbnotif kbswitcher kbpower kbpin kbcall, or "keys" for all of them
 # On-screen-keyboard focus scenarios: oskgtk (GTK4 field: auto-show, type
@@ -219,6 +219,7 @@ scenario() {
     lockcall)     reset; ctl lock; sleep 0.5; incoming_call; shot 12-incoming-call-locked ;;
     osd)          reset; ctl volumeUp; shot 10-volume-osd 0.5 ;;
     power)        reset; ctl powerMenu; shot 11-power-menu ;;
+    settings)     reset; ctl settings; shot 31-settings ;;
     kbhome)       reset; key -k Right -k Down -k Right; shot 13-kb-home-focus 0.4 ;;
     kbdock)       reset; key -k Right -k Down -k Down -k Down -k Down -k Down -k Down -k Right; shot 14-kb-dock-focus 0.4 ;;
     kbsearch)     reset; key ma; shot 15-kb-search 0.6 ;;
@@ -275,7 +276,7 @@ scenario() {
     oskemail)     oskcontent email email 29-osk-email "email purpose" ;;
     oskurl)       oskcontent url url 30-osk-url "url purpose" ;;
     oskcontent)   for s in osknum oskphone oskpass oskemail oskurl; do scenario "$s"; done ;;
-    all)          for s in home notification shade app keyboard switcher osd power lock pin call lockcall keys oskgtk oskfoot oskcontent; do scenario "$s"; done ;;
+    all)          for s in home notification shade app keyboard switcher osd power settings lock pin call lockcall keys oskgtk oskfoot oskcontent; do scenario "$s"; done ;;
     *) echo "unknown scenario: $1" >&2; return 1 ;;
   esac
 }
