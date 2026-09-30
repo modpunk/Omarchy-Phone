@@ -9,13 +9,13 @@ their content with no workflow changes required.
 
 ## phone-app.yml — `apps/phone/**`
 
-Runs the ~48 `unittest` tests (`apps/phone/scripts/test.sh`) in an `archlinux:latest` container
+Runs the 143 `unittest` tests (`apps/phone/scripts/test.sh`) in an `archlinux:latest` container
 (closest match to the Omarchy target). Installs `python`, `python-gobject`, `gtk4`, `libadwaita`,
 `dbus`, `python-phonenumbers`, then runs the suite under the test script's own `dbus-run-session`
 sandbox. `OMARCHY_PHONE_SKIP_SIPBED=1` is set explicitly to skip the ~6 docker-in-docker SIP
 end-to-end tests (`tests/test_sip.py`, needs a real docker daemon to build `tests/sipbed/`) rather
 than relying on that test's own `shutil.which("docker")` autodetection — verified end to end in a
-fresh container (55 ran, 6 skipped, 0 failures).
+fresh container (137 ran, 6 skipped, 0 failures).
 
 **After the `phone-app` branch merges:** if `pyproject.toml`/`requirements.txt` shows up, add it
 to the install step. If new system deps get added to the app (e.g. real PipeWire hardware access,

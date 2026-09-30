@@ -73,6 +73,9 @@ scripts/screenshots.sh     # re-render docs/phone/screenshots headlessly (gtk4-b
 - `test_accounts.py`: SIP account validation, baresip account-line building, the keyring wrapper
   (against its in-memory stand-in, `OMARCHY_PHONE_KEYRING=memory` — see below), and account
   add/edit/remove through `phoned`'s own methods (password never lands in Store or `state()`/JSON).
+- `test_audio.py`: PipeWire sink classification and pw-dump parsing, `AudioRouter` route
+  selection/switching/restore (against a recording fake for `pw-dump`/`wpctl`, real hardware never
+  touched), and the audio policy `CallManager` drives on incoming/answered/ended calls.
 - `test_numbers.py`: normalization, formatting, detection in text, false positives
   (dates, times, IPs, prices, order IDs, card numbers, URLs, OTP codes).
 - `test_screening.py`: rule precedence, DND + repeat callers + allowed groups, block/allow
