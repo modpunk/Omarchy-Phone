@@ -6,8 +6,11 @@ import qs.Services
 import qs.Widgets
 
 // Minimal on-screen keyboard. Sits above the nav bar with an exclusive zone
-// (the app shrinks instead of being covered) and types through wtype
-// (zwp_virtual_keyboard_v1). Never takes keyboard focus itself.
+// (the app shrinks instead of being covered), shown/hidden by Phone.qml
+// (focus-driven via ophone-im, or by hand: SUPER+K, the nav-bar glyph, the
+// shade tile). Types through the input method when a text field is focused,
+// wtype (zwp_virtual_keyboard_v1) otherwise. Never takes keyboard focus
+// itself.
 PanelWindow {
   id: kb
   visible: Phone.keyboardOpen && !Phone.locked
@@ -38,15 +41,29 @@ PanelWindow {
   readonly property var rows: symbols ? syms : letters
   readonly property real keyW: (width - Theme.px(6) * 11) / 10
 
+  // A focused text-input-v3 field (GTK4, Chromium/Electron, most Qt) gets
+  // plain characters and backspace through the input method (ophone-im,
+  // Services/Phone.qml): that's the protocol-correct path and works more
+  // reliably than a synthetic key event. Enter has no input-method
+  // equivalent (apps read it as a real keysym to submit/newline), and
+  // anything with no focused field (a terminal, an app that never adopted
+  // text-input-v3) has no input method to talk to, so both still go through
+  // wtype (virtual-keyboard-v1).
   function type(k) {
     if (k === "shift") { if (shift && !caps) caps = true; else { caps = false; shift = !shift } return }
     if (k === "sym") { symbols = true; return }
     if (k === "abc") { symbols = false; return }
-    if (k === "bksp") { Quickshell.execDetached(["wtype", "-k", "BackSpace"]); return }
+    if (k === "bksp") {
+      if (Phone.imFieldFocused) Phone.imBackspace(); else Quickshell.execDetached(["wtype", "-k", "BackSpace"])
+      return
+    }
     if (k === "enter") { Quickshell.execDetached(["wtype", "-k", "Return"]); return }
-    if (k === "space") { Quickshell.execDetached(["wtype", " "]); return }
+    if (k === "space") {
+      if (Phone.imFieldFocused) Phone.imCommit(" "); else Quickshell.execDetached(["wtype", " "])
+      return
+    }
     const ch = (shift || caps) ? k.toUpperCase() : k
-    Quickshell.execDetached(["wtype", "--", ch])
+    if (Phone.imFieldFocused) Phone.imCommit(ch); else Quickshell.execDetached(["wtype", "--", ch])
     if (shift && !caps) shift = false
   }
   function label(k) {

@@ -7,6 +7,10 @@
 # Scenarios: home notification shade app keyboard switcher osd power lock pin call lockcall all
 # Keyboard scenarios (typed with wtype into the preview): kbhome kbdock kbsearch
 #   kbshade kbnotif kbswitcher kbpower kbpin kbcall, or "keys" for all of them
+# On-screen-keyboard focus scenarios: oskgtk (GTK4 field: auto-show, type
+#   through the input method, manual hide, refocus) and oskfoot (a terminal
+#   never auto-shows it; the manual toggle still does). Both assert, not just
+#   screenshot; failures print "FAIL ...".
 #
 # Isolation: private XDG_RUNTIME_DIR (own Hyprland/Wayland/quickshell sockets),
 # private D-Bus session (the preview's notification daemon never touches the
@@ -73,8 +77,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Build the input-method-v2 helper if it's missing or stale (never touches
+# anything outside the repo: object files land in shell/im/build/).
+if [[ ! -x "$SHELL_DIR/bin/ophone-im" || "$SHELL_DIR/im/ophone-im.c" -nt "$SHELL_DIR/bin/ophone-im" ]]; then
+  make -C "$SHELL_DIR/im" >"$LOG/build-ophone-im.out" 2>&1 || { echo "ophone-im build failed; see $LOG/build-ophone-im.out" >&2; exit 1; }
+fi
+
 export OPHONE_SHELL="$SHELL_DIR" OPHONE_DEVICE=preview OPHONE_DRY_RUN=1
-export QT_QUICK_BACKEND=software QT_QPA_PLATFORM=wayland
+export QT_QUICK_BACKEND=software QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland
 export HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 HYPRLAND_NO_CRASHREPORTER=1
 
 WAYLAND_DISPLAY="$OPHONE_HOST_WAYLAND" Hyprland --config "$SHELL_DIR/hypr/hyprland.lua" >"$LOG/hyprland.out" 2>&1 &
@@ -104,8 +114,29 @@ export HYPRLAND_INSTANCE_SIGNATURE='$HYPRLAND_INSTANCE_SIGNATURE' DBUS_SESSION_B
 export OPHONE_SHELL='$SHELL_DIR' OPHONE_DRY_RUN=1
 ENV
 ctl() { qs -p "$SHELL_DIR/qs" ipc call shell "$@" >/dev/null 2>&1; }
+ipc() { qs -p "$SHELL_DIR/qs" ipc call shell "$@" 2>/dev/null; }
 for _ in $(seq 100); do ctl ping && break; sleep 0.2; done
 ctl ping || { echo "shell did not come up; see $LOG/qs.out" >&2; tail -30 "$LOG/qs.out" >&2; exit 1; }
+ok=0; fail=0
+assert_eq() { local desc="$1" expected="$2" actual="$3"
+  if [[ "$actual" == "$expected" ]]; then echo "OK   $desc"; ok=$((ok+1))
+  else echo "FAIL $desc (expected '$expected', got '$actual')"; fail=$((fail+1)); fi
+}
+assert_has() { local desc="$1" needle="$2" haystack="$3"
+  if grep -qF -- "$needle" <<<"$haystack"; then echo "OK   $desc"; ok=$((ok+1))
+  else echo "FAIL $desc (did not find '$needle')"; fail=$((fail+1)); fi
+}
+# Poll instead of a fixed sleep: a freshly launched app (GTK4 + a portal, or
+# a nested Hyprland already busy with several previous scenarios' windows)
+# doesn't always get mapped and focused within a fixed delay.
+wait_for() { local fn="$1" exp="$2" tries="${3:-25}"
+  for _ in $(seq "$tries"); do [[ "$(ipc "$fn")" == "$exp" ]] && return 0; sleep 0.2; done
+  return 1
+}
+wait_for_log() { local needle="$1" tries="${2:-15}"
+  for _ in $(seq "$tries"); do grep -qF -- "$needle" "$LOG/apps.out" 2>/dev/null && return 0; sleep 0.2; done
+  return 1
+}
 
 # Keys go to the preview only: wtype uses the preview's own WAYLAND_DISPLAY.
 key() { wtype "$@"; sleep 0.2; }
@@ -116,6 +147,20 @@ shot() { sleep "${2:-1.2}"; grim -o HEADLESS-1 "$OUT/$1.png"; echo "saved $OUT/$
 reset() { ctl reset; sleep 0.4; }
 term() { launch foot -D /tmp "$@" bash --noprofile --norc -c 'printf "\033[1mOmarchy Phone\033[0m  Vox Libertatis\n\n"; exec bash --noprofile --norc'; }
 launch() { "$@" >>"$LOG/apps.out" 2>&1 & PIDS+=($!); }
+# Kill every app window launched by an earlier scenario (PIDS[0] is
+# Hyprland, PIDS[1] is qs -- never touched). A crowded scrolling layout with
+# several leftover terminals can leave a stale window with the compositor's
+# keyboard focus, which would make the *next* scenario's focus/typing
+# assertions pass or fail for the wrong reason. The oskgtk/oskfoot scenarios
+# need a known, single-window focus state to mean anything.
+clear_apps() {
+  for ((i=${#PIDS[@]}-1; i>=2; i--)); do kill "${PIDS[i]}" 2>/dev/null || true; unset 'PIDS[i]'; done
+  PIDS=("${PIDS[@]}")
+  sleep 0.3
+}
+# A GTK4 window with a text field: the closest stand-in to the (not yet
+# built) Phone app's dial/search field for exercising text-input-v3.
+oskfield() { : >"$LOG/apps.out"; launch python3 "$HERE/gtk4-field.py"; }
 notify() { notify-send "$@" >>"$LOG/apps.out" 2>&1 || true; }
 seed_notifications() {
   notify -a "Messages" -i mail-message-new "Ada" "Are we still on for 6? I'll bring the charger."
@@ -134,8 +179,10 @@ scenario() {
     home)         reset; shot 01-home ;;
     notification) reset; notify -a "Messages" -i mail-message-new "Ada" "Running 5 minutes late"; shot 02-notification-banner 0.8 ;;
     shade)        reset; seed_notifications; sleep 0.5; ctl shade; shot 03-shade ;;
-    app)          reset; term; sleep 2; shot 04-app 1 ;;
-    keyboard)     reset; term; sleep 2; ctl keyboard; shot 05-keyboard ;;
+    app)          reset; term; sleep 2
+                  [[ "$(ipc isKeyboardOpen)" == "true" ]] && { bind keyboard; sleep 0.3; } # foot auto-shows it too; "app" illustrates the plain full-screen app
+                  shot 04-app 1 ;;
+    keyboard)     reset; term; sleep 2; shot 05-keyboard ;;   # auto-shown: foot speaks text-input-v3 too
     switcher)     reset; term; sleep 1.5; term --title "Notes"; sleep 1.5; ctl switcher; shot 06-switcher 1.5 ;;
     lock)         reset; seed_notifications; ctl lock; shot 07-lock 1.5 ;;
     pin)          ctl lock; sleep 0.5; ctl pin; shot 08-lock-pin ;;
@@ -152,8 +199,39 @@ scenario() {
     kbpower)      reset; bind power-menu; key -k Down; shot 19-kb-power-focus 0.4 ;;
     kbpin)        reset; ctl lock; sleep 0.8; key 1; key 2; wtype 3; shot 20-kb-lock-pin 0 ;;
     kbcall)       reset; incoming_call; sleep 0.8; key -k Right; shot 21-kb-call-focus 0.4 ;;
+    oskgtk)
+      reset; clear_apps; oskfield
+      wait_for isKeyboardOpen true || true
+      assert_eq "GTK4 field focus auto-shows the keyboard" "true" "$(ipc isKeyboardOpen)"
+      shot 22-osk-auto-show 0.3
+      sleep 0.3  # give GTK's own text-input-v3 enable() a moment past our activate/done
+      ipc typeText "hi"
+      wait_for_log "TEXT:hi" || true
+      assert_has "typed text reaches the field via the input method" "TEXT:hi" "$(cat "$LOG/apps.out")"
+      bind keyboard; sleep 0.3   # manual toggle: hide it while the field is still focused
+      assert_eq "manual toggle hides it even though the field is still focused" "false" "$(ipc isKeyboardOpen)"
+      shot 23-osk-manual-hide 0.3
+      bind keyboard; sleep 0.3   # manual toggle again: show it back
+      assert_eq "manual toggle re-shows it" "true" "$(ipc isKeyboardOpen)"
+      ctl home; sleep 0.5
+      assert_eq "leaving the app (home) closes it" "false" "$(ipc isKeyboardOpen)"
+      ;;
+    oskfoot)
+      reset; clear_apps; term
+      wait_for isKeyboardOpen true || true
+      # foot itself speaks text-input-v3 (for IME composition), so this is
+      # the auto-show path, not the manual one -- typing must still reach
+      # the terminal correctly through commit_string.
+      assert_eq "foot auto-shows too (it supports text-input-v3 for IME composition)" "true" "$(ipc isKeyboardOpen)"
+      ipc typeText "ls"; sleep 0.3
+      shot 24-osk-foot-auto 0.3
+      bind keyboard; sleep 0.3
+      assert_eq "manual toggle still hides it" "false" "$(ipc isKeyboardOpen)"
+      bind keyboard; sleep 0.3
+      assert_eq "manual toggle still shows it back" "true" "$(ipc isKeyboardOpen)"
+      ;;
     keys)         for s in kbhome kbdock kbsearch kbshade kbnotif kbswitcher kbpower kbpin kbcall; do scenario "$s"; done ;;
-    all)          for s in home notification shade app keyboard switcher osd power lock pin call lockcall keys; do scenario "$s"; done ;;
+    all)          for s in home notification shade app keyboard switcher osd power lock pin call lockcall keys oskgtk oskfoot; do scenario "$s"; done ;;
     *) echo "unknown scenario: $1" >&2; return 1 ;;
   esac
 }
@@ -166,3 +244,7 @@ if [[ "${1:-}" == "--hold" ]]; then
 fi
 for s in "${@:-all}"; do scenario "$s"; done
 grep -E 'ERROR|WARN|error' "$LOG/qs.out" | grep -v -E 'QDBus|Could not register app ID' | head -20 || true
+if (( ok + fail > 0 )); then
+  echo "assertions: $ok ok, $fail failed"
+  (( fail == 0 )) || exit 1
+fi

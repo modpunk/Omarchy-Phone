@@ -34,7 +34,7 @@ ShellRoot {
   GlobalShortcut { appid: "ophone"; name: "shade"; description: "Notifications and quick settings"; onPressed: { Phone.byKey = Phone.shade === 0; Phone.toggleShade() } }
   GlobalShortcut { appid: "ophone"; name: "power-menu"; description: "Power menu"; onPressed: { Phone.byKey = !Phone.powerMenuOpen; Phone.togglePowerMenu() } }
   GlobalShortcut { appid: "ophone"; name: "lock"; description: "Lock"; onPressed: Phone.lock() }
-  GlobalShortcut { appid: "ophone"; name: "keyboard"; description: "On-screen keyboard"; onPressed: Phone.keyboardOpen = !Phone.keyboardOpen }
+  GlobalShortcut { appid: "ophone"; name: "keyboard"; description: "On-screen keyboard"; onPressed: Phone.toggleKeyboard() }
 
   // Scripting / test surface: qs -p shell/qs ipc call shell <fn> [args]
   // (shell/bin/ophone-ctl wraps this.)
@@ -45,7 +45,12 @@ ShellRoot {
     function switcher(): void { Phone.showSwitcher() }
     function shade(): void { Phone.openShade() }
     function closeShade(): void { Phone.closeShade() }
-    function keyboard(): void { Phone.keyboardOpen = !Phone.keyboardOpen }
+    function keyboard(): void { Phone.toggleKeyboard() }
+    function isKeyboardOpen(): bool { return Phone.keyboardOpen }
+    // Preview/test helper: type text through the input method when a field
+    // is focused (falls back to nothing if none is -- Keyboard.qml is the
+    // real typing path for wtype-driven keys).
+    function typeText(text: string): void { Phone.imCommit(text) }
     function lock(): void { Phone.lock() }
     function pin(): void { if (Phone.locked) Phone.pinVisible = true }
     function powerMenu(): void { Phone.powerMenu() }
@@ -68,7 +73,7 @@ ShellRoot {
     }
     // Preview helper: back to a clean home screen. Unlocks only in dry-run mode.
     function reset(): void {
-      Phone.closeOverlays(); Phone.keyboardOpen = false; Notifs.hideBanner()
+      Phone.closeOverlays(); Phone.resetKeyboard(); Notifs.hideBanner()
       if (Phone.dryRun) { Notifs.clearEverything(); Phone.unlock() }
       Phone.home()
     }
