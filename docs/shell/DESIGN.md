@@ -34,6 +34,7 @@ QuickShell (shell/qs/shell.qml), one process
   NavBar         Top layer, exclusive 20u: home pill, swipe gestures, keyboard key
   Shade          Overlay: quick settings + notification list (pull down from top)
   Switcher       Overlay: app cards (swipe up and hold / double-press Home)
+  SettingsSurface Overlay: Display/Sound/Bluetooth/Network/About (gear tile in Shade)
   Keyboard       Top layer, exclusive: on-screen keyboard, types via wtype
   LockScreen     ext-session-lock: clock, notifications, swipe up, PIN pad (PAM)
   CallSurface    Overlay (and inside the lock): incoming call, accept/decline
@@ -195,9 +196,10 @@ root. Two problems followed from that:
   `scrypt$N$r$p$<salt-hex>$<hash-hex>`. `sudo ophone-pin set` prompts for it
   twice (never on argv, so it's not visible via `ps` -- see F15 in the
   security review, the same lesson applied here). This is the provisioning
-  command a future Omarchy settings/menu UI's "Change PIN" would shell out
-  to; there is no UI for it yet (Config settings/menu app is a separate,
-  not-yet-built project).
+  command a settings UI's "Change PIN" would shell out to; `Surfaces/
+  SettingsSurface.qml` exists now (Display/Sound/Bluetooth/Network/About),
+  but it doesn't have a "Change PIN" row yet -- still a command-line-only
+  step today.
 * `shell/system/pam/ophone-lock` no longer includes `login`. Its `auth`
   chain checks the PIN with `pam_exec.so expose_authtok` calling
   `ophone-pin verify` (the PIN arrives on the child's stdin, again never on
@@ -697,11 +699,13 @@ asserts `ipc keyboardLayout`, not just the screenshot):
 
 * Auto-rotation (iio-sensor-proxy to monitor `transform`, respecting the
   rotation-lock tile).
-* Cellular modem (ModemManager), SMS, and a settings app.
+* Cellular modem (ModemManager) and SMS. (`SettingsSurface.qml` now covers
+  Display/Sound/Bluetooth/About; Wi-Fi is a clearly-marked placeholder row --
+  the driver/network stack itself is still out of scope here.)
 * Inline replies in the shade (the daemon already advertises support).
 * Fingerprint unlock (Touch ID isn't supported on this hardware under Linux).
 * Measure memory and frame time on the real device, and trim anything costly.
-* A Settings/menu UI entry for "Change PIN" (today: `sudo ophone-pin set` at
+* A "Change PIN" row in `SettingsSurface.qml` (today: `sudo ophone-pin set` at
   a shell).
 * A setuid-root PIN verifier (or `pam_pwdfile`, not packaged for Arch Linux
   ARM) instead of the group-readable `pin-hash` file, if this ever stops

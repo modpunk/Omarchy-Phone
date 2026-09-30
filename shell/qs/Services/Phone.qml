@@ -116,8 +116,9 @@ Singleton {
   Timer { id: imRestart; interval: 4000; onTriggered: { imWatch.running = false; imWatch.running = true } }
 
   property bool powerMenuOpen: false
+  property bool settingsOpen: false
   property bool screenOn: true
-  readonly property bool anyOverlay: shade > 0 || switcherOpen || powerMenuOpen
+  readonly property bool anyOverlay: shade > 0 || switcherOpen || powerMenuOpen || settingsOpen
   // Set by the keyboard shortcuts just before they open a surface, so it
   // opens with the focus ring on its first item (touch opens it without one).
   property bool byKey: false
@@ -196,14 +197,14 @@ Singleton {
   function hypr(expr) { Hyprland.dispatch(expr) }
 
   function closeOverlays() {
-    closeShade(); switcherOpen = false; powerMenuOpen = false
+    closeShade(); switcherOpen = false; powerMenuOpen = false; settingsOpen = false
   }
 
   // --- navigation
   function home() {
     if (locked) { pinVisible = false; return }
     homeRequested()
-    const hadOverlay = shade > 0 || switcherOpen || powerMenuOpen
+    const hadOverlay = anyOverlay
     closeOverlays()
     resetKeyboard()
     if (!hadOverlay || !atHome) hypr('hl.dsp.focus({ workspace = "' + homeWorkspace + '" })')
@@ -250,6 +251,13 @@ Singleton {
   }
 
   function togglePowerMenu() { if (powerMenuOpen) powerMenuOpen = false; else powerMenu() }
+
+  // Settings (docs/shell/DESIGN.md Non-goals: "A Settings/menu UI" -- the
+  // gear tile in Shade.qml opens this). Same shape as showSwitcher()/
+  // powerMenu(): closes whatever else is open first.
+  function openSettings() { if (locked) return; closeShade(); switcherOpen = false; powerMenuOpen = false; settingsOpen = true }
+  function closeSettings() { settingsOpen = false }
+  function toggleSettings() { if (settingsOpen) closeSettings(); else openSettings() }
 
   // Home key: single press = home, double press = switcher.
   Timer { id: homeDouble; interval: 300; onTriggered: root.home() }

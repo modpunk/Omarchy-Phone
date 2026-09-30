@@ -21,6 +21,7 @@ ShellRoot {
   Shade {}
   Switcher {}
   PowerMenu {}
+  SettingsSurface {}
   CallSurface {}
   LockScreen {}
 
@@ -60,6 +61,9 @@ ShellRoot {
     function lock(): void { Phone.lock() }
     function pin(): void { if (Phone.locked) Phone.pinVisible = true }
     function powerMenu(): void { Phone.powerMenu() }
+    function settings(): void { Phone.openSettings() }
+    function closeSettings(): void { Phone.closeSettings() }
+    function isSettingsOpen(): bool { return Phone.settingsOpen }
     function powerPress(): void { Phone.powerPressed() }
     function powerRelease(): void { Phone.powerReleased() }
     function homeKey(): void { Phone.homePressed() }
