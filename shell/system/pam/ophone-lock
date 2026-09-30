@@ -1,0 +1,26 @@
+#%PAM-1.0
+# /etc/pam.d/ophone-lock: the phone lock screen's PIN check.
+#
+# v2 (see docs/shell/DESIGN.md "Lock screen PIN"): the PIN is its own secret,
+# independent of the account/SSH/sudo password. It is checked with pam_exec
+# against a hash in /etc/omarchy-phone/pin-hash (managed by shell/bin/ophone-pin,
+# never /etc/shadow), so a compromised or forgotten PIN can never be used to
+# SSH in or sudo, and vice versa.
+#
+# Throttling: pam_faillock still gates repeated guesses, exactly as it did
+# through the old "include login" chain (this is F3 in the security review:
+# don't lose it). It needs its own tally directory because this PAM stack
+# runs with the privileges of the caller -- the shell, running as the phone's
+# session user, not root -- and that user cannot write to the default
+# /run/faillock (root:root 0755). The image ships /run/omarchy-phone/faillock
+# via a tmpfiles.d rule (see shell/system/README.md); it is a separate tally
+# from the one system-auth/login keeps, so a bad PIN streak never touches the
+# account's own lockout state.
+auth      requisite               pam_faillock.so preauth  dir=/run/omarchy-phone/faillock deny=5 unlock_time=300
+auth      [success=1 default=bad] pam_exec.so expose_authtok quiet /usr/share/omarchy-phone/shell/bin/ophone-pin verify
+auth      [default=die]           pam_faillock.so authfail dir=/run/omarchy-phone/faillock deny=5 unlock_time=300
+auth      required                pam_faillock.so authsucc dir=/run/omarchy-phone/faillock
+# No pam_unix here on purpose: pam_unix's "account" phase wants shadow access
+# this unprivileged caller doesn't have. There is nothing account-side to
+# check for a PIN (no expiry, no shadow record), so just allow it.
+account   required                pam_permit.so

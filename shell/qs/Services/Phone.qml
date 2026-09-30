@@ -1,0 +1,199 @@
+pragma Singleton
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import Quickshell.Wayland
+import Quickshell.Hyprland
+
+// Shell-wide state and actions. Surfaces bind to these properties; the
+// hardware keys, gestures and IPC all end up calling these functions.
+Singleton {
+  id: root
+
+  readonly property bool dryRun: Quickshell.env("OPHONE_DRY_RUN") === "1"
+  readonly property string shellDir: Quickshell.env("OPHONE_SHELL") || Quickshell.shellDir + "/.."
+  readonly property int homeWorkspace: 1
+  readonly property int appWorkspace: 2
+
+  // --- surface state
+  // F4 (security review): this used to default to false unconditionally, so
+  // a freshly booted phone came up fully unlocked until someone pressed
+  // power once. It now starts locked whenever a lock-screen PIN is
+  // configured (see pinConfigured below) -- and stays unlocked at boot only
+  // when there's genuinely no PIN to unlock with, so this can never brick a
+  // device that hasn't been provisioned yet. dryRun (the preview) is always
+  // unlocked at boot so the existing scenarios are unaffected.
+  property bool locked: false
+  property bool pinVisible: false
+  property real shade: 0            // 0 = closed .. 1 = fully open
+  property bool shadeDragging: false
+  property bool switcherOpen: false
+  property bool keyboardOpen: false
+  property bool powerMenuOpen: false
+  property bool screenOn: true
+  readonly property bool anyOverlay: shade > 0 || switcherOpen || powerMenuOpen
+  // Set by the keyboard shortcuts just before they open a surface, so it
+  // opens with the focus ring on its first item (touch opens it without one).
+  property bool byKey: false
+  function takeByKey() { const k = byKey; byKey = false; return k }
+  // Shift+Tab arrives as Backtab from a real keyboard but as Tab+Shift from
+  // some (virtual) ones; surfaces read keys through this.
+  function keyOf(ev) { return ev.key === Qt.Key_Tab && (ev.modifiers & Qt.ShiftModifier) ? Qt.Key_Backtab : ev.key }
+  signal homeRequested()           // home pressed: the home screen clears its search
+  readonly property bool atHome: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id === homeWorkspace : true
+
+  // --- lock-screen PIN (docs/shell/DESIGN.md "Lock screen PIN")
+  readonly property string pinFile: Quickshell.env("OPHONE_PIN_FILE") || "/etc/omarchy-phone/pin-hash"
+  property bool pinConfigured: false
+  property bool _bootLockDecided: false
+  FileView {
+    path: root.pinFile
+    printErrors: false
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: { root.pinConfigured = true; root._decideBootLock() }
+    onLoadFailed: { root.pinConfigured = false; root._decideBootLock() }
+  }
+  function _decideBootLock() {
+    if (_bootLockDecided) return
+    _bootLockDecided = true
+    if (!dryRun && pinConfigured) locked = true
+  }
+
+  // --- idle auto-lock (docs/shell/DESIGN.md "Idle auto-lock"): Hyprland's
+  // ext-idle-notify-v1, the same protocol swaylock/hypridle use, consumed
+  // directly through Quickshell's own wrapper (no hypridle process, no extra
+  // dependency -- idiomatic for this codebase, which already leans on
+  // Quickshell.Wayland for WlSessionLock rather than a separate lock binary).
+  // Locking requires a configured PIN for the same reason the boot lock
+  // does; the screen still blanks either way, to save power.
+  IdleMonitor {
+    id: idleMonitor
+    enabled: true
+    respectInhibitors: true
+    timeout: {
+      // Seconds, not milliseconds: verified empirically (see docs/shell/DESIGN.md
+      // "Idle auto-lock") -- IdleMonitor.timeout: 3 marks idle at ~3s.
+      const override = Quickshell.env("OPHONE_IDLE_SECONDS")
+      const n = override ? parseInt(override) : Config.idleLockSeconds
+      return Number.isFinite(n) ? n : Config.idleLockSeconds
+    }
+    onIsIdleChanged: {
+      if (!isIdle || !root.screenOn) return
+      if (root.pinConfigured) root.lock()
+      root.screenOff()
+    }
+  }
+
+  // --- device state the shell owns
+  property bool silent: false
+  property int volume: 50
+  property int brightness: 70
+  property bool flashlight: false
+  property bool rotationLock: true
+  property bool airplane: false
+
+  // --- OSD
+  property string osdIcon: ""
+  property string osdLabel: ""
+  property int osdValue: -1
+  property int osdSerial: 0
+  function showOsd(icon, label, value) {
+    osdIcon = icon; osdLabel = label; osdValue = value === undefined ? -1 : value
+    osdSerial++
+  }
+
+  // --- helpers
+  function sys(args) {
+    Quickshell.execDetached([shellDir + "/bin/ophone-sys"].concat(args))
+  }
+  function hypr(expr) { Hyprland.dispatch(expr) }
+
+  function closeOverlays() {
+    closeShade(); switcherOpen = false; powerMenuOpen = false
+  }
+
+  // --- navigation
+  function home() {
+    if (locked) { pinVisible = false; return }
+    homeRequested()
+    const hadOverlay = shade > 0 || switcherOpen || powerMenuOpen
+    closeOverlays()
+    keyboardOpen = false
+    if (!hadOverlay || !atHome) hypr('hl.dsp.focus({ workspace = "' + homeWorkspace + '" })')
+  }
+  function showSwitcher() { if (locked) return; closeShade(); powerMenuOpen = false; switcherOpen = true }
+  function toggleSwitcher() { if (switcherOpen) switcherOpen = false; else showSwitcher() }
+  function nextApp() { hypr('hl.dsp.focus({ direction = "r" })') }
+  function prevApp() { hypr('hl.dsp.focus({ direction = "l" })') }
+  function launch(entry) {
+    closeOverlays()
+    entry.execute()
+    hypr('hl.dsp.focus({ workspace = "' + appWorkspace + '" })')
+  }
+
+  // --- shade (animated from any value to open/closed)
+  NumberAnimation { id: shadeAnim; target: root; property: "shade"; duration: 180; easing.type: Easing.OutCubic }
+  function openShade() { if (locked) return; switcherOpen = false; shadeAnim.to = 1; shadeAnim.restart() }
+  function closeShade() { if (shade === 0) return; shadeAnim.to = 0; shadeAnim.restart() }
+  function toggleShade() { if (shade > 0) closeShade(); else openShade() }
+  function settleShade(velocity) {
+    if (velocity > 300 || (velocity > -300 && shade > 0.4)) openShade(); else closeShade()
+  }
+
+  // --- lock / screen
+  function lock() { byKey = false; closeOverlays(); keyboardOpen = false; pinVisible = false; locked = true }
+  function unlock() { byKey = false; locked = false; pinVisible = false }
+  function screenOff() { screenOn = false; hypr('hl.dsp.dpms({ action = "disable" })') }
+  function screenOnNow() { screenOn = true; hypr('hl.dsp.dpms({ action = "enable" })') }
+
+  // Power key: short press toggles the screen (locking on the way off),
+  // long press opens the power menu.
+  Timer { id: powerHold; interval: 600; onTriggered: { root.powerLongFired = true; root.powerMenu() } }
+  property bool powerLongFired: false
+  function powerPressed() { powerLongFired = false; powerHold.restart() }
+  function powerReleased() {
+    if (!powerHold.running) return
+    powerHold.stop()
+    if (powerLongFired) return
+    if (screenOn) { lock(); screenOff() } else screenOnNow()
+  }
+  function powerMenu() {
+    if (!screenOn) screenOnNow()
+    closeShade(); switcherOpen = false; powerMenuOpen = true
+  }
+
+  function togglePowerMenu() { if (powerMenuOpen) powerMenuOpen = false; else powerMenu() }
+
+  // Home key: single press = home, double press = switcher.
+  Timer { id: homeDouble; interval: 300; onTriggered: root.home() }
+  function homePressed() {
+    if (!screenOn) { screenOnNow(); return }
+    if (homeDouble.running) { homeDouble.stop(); showSwitcher() } else homeDouble.restart()
+  }
+
+  // --- audio keys
+  property var ringingCall: null      // set by Notifs when a call is ringing
+  signal silenceRinger()
+  function volumeUp() { setVolume(volume + 5) }
+  function volumeDown() {
+    if (ringingCall) { silenceRinger(); return }
+    setVolume(volume - 5)
+  }
+  function setVolume(v) {
+    volume = Math.max(0, Math.min(100, v))
+    sys(["volume", String(volume)])
+    showOsd(volume === 0 ? "\u{f075f}" : "\u{f057e}", "Volume", volume)
+  }
+  function toggleSilent() {
+    silent = !silent
+    sys(["silent", silent ? "on" : "off"])
+    showOsd(silent ? "\u{f009b}" : "\u{f009a}", silent ? "Silent" : "Ringer on")
+  }
+
+  // --- quick settings
+  function setBrightness(v) { brightness = Math.max(1, Math.min(100, Math.round(v))); sys(["brightness", String(brightness)]) }
+  function toggleFlashlight() { flashlight = !flashlight; sys(["flashlight", flashlight ? "on" : "off"]) }
+  function toggleRotationLock() { rotationLock = !rotationLock; sys(["rotation-lock", rotationLock ? "on" : "off"]) }
+  function toggleAirplane() { airplane = !airplane; sys(["airplane", airplane ? "on" : "off"]) }
+}

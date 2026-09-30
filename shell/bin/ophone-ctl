@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Drive the Omarchy Phone shell from scripts: ophone-ctl <fn> [args]
+#   home switcher shade closeShade keyboard lock powerMenu volumeUp volumeDown
+#   silent isSilent isLocked answerCall declineCall clearNotifications ping
+# Hardware keys don't use this (they go through Hyprland global shortcuts).
+set -euo pipefail
+dir="${OPHONE_SHELL:-$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
+[[ $# -ge 1 ]] || { sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+exec qs -p "$dir/qs" ipc call shell "$@"
