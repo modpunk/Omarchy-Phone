@@ -33,8 +33,11 @@ PanelWindow {
     anchors.verticalCenter: parent.verticalCenter
     text: "\u{f030c}"; size: 16
     color: Phone.keyboardOpen ? Theme.accent : Theme.dim
-    visible: !Phone.atHome || Phone.keyboardOpen
-    TapHandler { onTapped: Phone.keyboardOpen = !Phone.keyboardOpen; margin: Theme.px(10) }
+    // Shown whenever a field is focused (even if a Bluetooth keyboard is
+    // suppressing the auto-show, so there's still a way to ask for it) or
+    // it's already open for some other reason (e.g. a terminal).
+    visible: !Phone.atHome || Phone.keyboardOpen || Phone.imFieldFocused
+    TapHandler { onTapped: Phone.toggleKeyboard(); margin: Theme.px(10) }
   }
 
   Timer {

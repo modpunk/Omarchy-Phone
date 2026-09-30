@@ -58,6 +58,22 @@ shell, `docs/phone/DESIGN.md` and `docs/phone/API.md` for the Phone app.
 iPhone 6s: 750x1334 panel at scale 2 (375x667 logical), 2 cores, 2 GB RAM, software rendering only.
 See [Omarchy-iPhone6s](https://github.com/modpunk/Omarchy-iPhone6s) for how to boot it.
 
+## Packages the phone image must add
+
+Beyond what Omarchy/quickshell already installs:
+
+- `wtype` — the on-screen keyboard's fallback typing path (already required
+  before this; still needed for Enter and for apps with no focused
+  text-input).
+- Build-time only, wherever `shell/bin/ophone-im` gets compiled (see
+  [docs/shell/DESIGN.md](docs/shell/DESIGN.md#on-screen-keyboard)): a C
+  compiler, the `wayland` package (`wayland-scanner` + client headers), and
+  `pkgconf`. `make -C shell/im` produces the binary; nothing new is needed at
+  runtime (it links only `libwayland-client`, already a quickshell
+  dependency).
+
+squeekboard and wvkbd were considered and not used — see DESIGN.md for why.
+
 ## License and credits
 
 The logo is derived from the [Omarchy](https://omarchy.org) logo, which is MIT licensed,

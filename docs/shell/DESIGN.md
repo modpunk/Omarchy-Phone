@@ -425,10 +425,70 @@ packages (`python-gobject`/`python` and `bluez`/`bluez-utils` are already in
 No OSK is in the base install, and qt6-virtualkeyboard can't type into other
 apps' windows. The shell ships a small QML keyboard (letters, symbols, shift,
 backspace, enter) on a Top layer with an exclusive zone, so the app above it
-shrinks instead of being covered. Keys are typed through `wtype`
-(virtual-keyboard-v1). v1 toggles it by hand, from the nav bar's keyboard glyph, the
-shade tile, or `SUPER+K`. Showing it automatically needs input-method-v2 (see
-next steps).
+shrinks instead of being covered, never the reverse: input-method-v2 only
+hands the input method surrounding text and a purpose hint, not a rectangle
+for every app, so there's no reliable coordinate to slide the keyboard around
+without risking it landing on top of the field instead of below it. Resizing
+the toplevel is the one thing that's guaranteed to keep the focused field
+visible (GTK scrolls the focused entry into view when its window shrinks;
+foot just reflows).
+
+**Showing and hiding it.** `shell/im/ophone-im.c` is a small standalone
+process (no UI, ~150 lines) that binds `zwp_input_method_manager_v2` and
+becomes *an* input method for the seat — not a competing OSK, just a listener
+for `activate`/`deactivate`. Quickshell (`Services/Phone.qml`) spawns it as a
+child process and reads one line per state change from its stdout:
+
+| Line | Meaning |
+|---|---|
+| `active` | a `text-input-v3` field is now focused |
+| `inactive` | none is |
+| `unavailable` | another input method is already bound to this seat (e.g. fcitx5); auto show/hide is disabled and only the manual toggle works |
+
+`zwp_input_method_v2` is a real Wayland protocol object, not a heuristic:
+GTK4, Chromium/Electron and most Qt apps create a `text-input-v3` object and
+call `enable()`/`disable()` on it as focus moves, and **foot also speaks it**
+(for IME composition), so a terminal auto-shows the keyboard too, not just
+GUI apps. Plain characters go through the same connection when a field is
+focused (`commit_string`), which is the correct path for an input method to
+insert text and doesn't depend on wtype racing a key event into whatever the
+compositor currently thinks has focus. Backspace stays a real `BackSpace` key
+event (`wtype`) for every app: `delete_surrounding_text` is the
+protocol-correct way for an input method to delete, and it works in GTK4, but
+foot doesn't act on it despite speaking text-input-v3 (confirmed in
+`shell/preview/run.sh`'s `oskfoot` scenario), so there's no single correct
+choice here and a key event is what already works everywhere. Enter has no
+input-method equivalent either (apps read a real `Return` keysym to
+submit/newline), and anything with no focused field (an app that never
+adopted text-input-v3) has no input method to talk to, so both of those
+always go through `wtype` too, as before.
+
+`Phone.keyboardOpen` is derived, never set directly:
+`keyboardPinned || (imFieldFocused && !keyboardSuppressed && !hardwareKeyboardConnected)`.
+The manual toggle (`SUPER+K`, the nav-bar glyph, the shade tile) flips
+`keyboardPinned`/`keyboardSuppressed` and always works, including with no
+field focused (a plain terminal command line) or with a Bluetooth keyboard
+connected (`hardwareKeyboardConnected`: a connected `Quickshell.Bluetooth`
+device with `icon === "input-keyboard"`), which only suppresses the
+*automatic* show. Losing focus always closes it and clears the manual
+override, so the next distinct field starts from a clean auto-show/hide
+cycle. `home()` and `lock()` reset all of it, so leaving an app or locking
+the screen never leaves a stale keyboard.
+
+**Why a helper process instead of squeekboard or wvkbd.** Quickshell 0.3.1
+has no `Quickshell.TextInput`/input-method QML module (checked against
+`/usr/lib/qt6/qml/Quickshell/`), so something outside QML has to speak the
+protocol. squeekboard is the GNOME OSK and *is* an input method, but it draws
+its own GTK keyboard UI (can't reuse just its focus-watching half) and pulls
+in gtk3 + gnome-desktop + feedbackd — heavy for a 2 GB phone and it would
+fight the shell's own themed keyboard. wvkbd doesn't watch input-method-v2 at
+all (X11-style: always visible, manually toggled) and isn't in Arch Linux ARM's
+repos (AUR only). ophone-im links only `libwayland-client`, which quickshell
+already depends on, so it adds no new runtime package and costs about 1 MB
+RSS. Next step: use the `content_type` event (purpose/hint, already received
+and currently ignored) to switch to a numeric layout for phone-number/digit
+fields, and to skip showing a preview of typed characters for password
+fields.
 
 ### Theme
 
@@ -502,11 +562,26 @@ shell/bin/ophone-ctl           hardware-key / script entry point -> qs ipc
 shell/bin/ophone-sys           system actions (Wi-Fi, BT, brightness, ...), dry-run aware
 shell/bin/ophone-pin           hash/verify/set the lock-screen PIN (PAM calls `verify`)
 shell/bin/ophone-btagentd      real BlueZ pairing agent (on-screen Pair/Reject)
+shell/bin/ophone-im            built from shell/im/ (not checked in; see below)
+shell/im/ophone-im.c           input-method-v2 watcher/typer (see "On-screen keyboard")
+shell/im/protocol/*.xml        vendored zwp_input_method_unstable_v2 (not in wayland-protocols anymore)
+shell/im/Makefile              wayland-scanner + cc -> shell/bin/ophone-im
 shell/preview/run.sh           isolated nested preview + screenshot scenarios
+shell/preview/gtk4-field.py    preview-only stand-in text field (apps/phone doesn't exist yet)
 shell/tests/                  unit tests for ophone-pin and ophone-btagentd (shell/tests/run.sh)
 shell/system/                  logind drop-in, PAM file, bluetooth/main.conf, systemd unit,
                                 tmpfiles.d rule (installed by the image, not the shell)
 ```
+
+`shell/bin/ophone-im` is a build artifact (`.gitignore`d, along with
+`shell/im/build/`): the image build runs `make -C shell/im` once; `run.sh`
+does the same on demand so a fresh checkout previews correctly.
+
+**Packages.** Build-time only, wherever `shell/bin/ophone-im` gets compiled
+(the image build, not necessarily the running phone): a C compiler and the
+`wayland` package (ships `wayland-scanner` and the client headers) plus
+`pkgconf`. Runtime: nothing new — `ophone-im` links only `libwayland-client`,
+already pulled in by quickshell's own dependencies.
 
 ## Preview harness
 
@@ -523,7 +598,14 @@ socket. Hyprland doesn't run binds for virtual keyboards, so those scenarios
 dispatch the same `ophone:*` global a SUPER bind would, and
 `hyprctl binds` shows the binds themselves. `source /tmp/oph-$UID/env`
 attaches another terminal (hyprctl, grim, notify-send, and `qs ipc` all reach
-the preview, never the host).
+the preview, never the host). If another preview is already running (e.g. a
+second worktree), pass a distinct `OPHONE_PREVIEW_DIR` — the default
+`/tmp/oph-$UID` is shared and two concurrent runs will cross-wire Wayland
+sockets.
+
+The `oskgtk`/`oskfoot` scenarios (below) don't just screenshot: they assert
+through `qs ipc call shell isKeyboardOpen`/`typeText` and fail the run
+(non-zero exit, `FAIL ...` lines) if focus-driven show/hide or typing breaks.
 
 | Scenario | Screenshot |
 |---|---|
@@ -531,7 +613,7 @@ the preview, never the host).
 | notification | ![](screenshots/02-notification-banner.png) |
 | shade | ![](screenshots/03-shade.png) |
 | app | ![](screenshots/04-app.png) |
-| keyboard | ![](screenshots/05-keyboard.png) |
+| keyboard: auto-shown (foot speaks text-input-v3 too) | ![](screenshots/05-keyboard.png) |
 | switcher | ![](screenshots/06-switcher.png) |
 | lock | ![](screenshots/07-lock.png) |
 | pin | ![](screenshots/08-lock-pin.png) |
@@ -554,10 +636,21 @@ Keyboard scenarios (`run.sh keys` runs them all):
 | kbpin: digits typed on the keyboard | ![](screenshots/20-kb-lock-pin.png) |
 | kbcall: Right rings Accept | ![](screenshots/21-kb-call-focus.png) |
 
+Focus-driven on-screen-keyboard scenarios:
+
+| Scenario | Screenshot |
+|---|---|
+| oskgtk: a GTK4 field focused auto-shows it, typed text lands via the input method | ![](screenshots/22-osk-auto-show.png) |
+| oskgtk: manual toggle hides it while the field is still focused | ![](screenshots/23-osk-manual-hide.png) |
+| oskfoot: foot auto-shows it too, typed text reaches the terminal | ![](screenshots/24-osk-foot-auto.png) |
+| oskfoot: backspace (wtype) still deletes, unlike delete_surrounding_text | ![](screenshots/25-osk-foot-backspace.png) |
+
 ## Non-goals (v1) and next steps
 
-* Keyboard auto-show: implement input-method-v2 (or ship wvkbd and toggle it
-  from `text-input` focus events).
+* Purpose-aware keyboard layouts (a numeric pad for phone-number/digit
+  fields, hiding typed characters for passwords): the `content_type` event
+  already arrives at `ophone-im` with this information: it's just not used
+  yet.
 * Auto-rotation (iio-sensor-proxy to monitor `transform`, respecting the
   rotation-lock tile).
 * Cellular modem (ModemManager), SMS, and a settings app.

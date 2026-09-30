@@ -93,7 +93,7 @@ PanelWindow {
       Tile { glyph: "\u{f001d}"; focused: shade.sel === 3; label: "Airplane"; on: Phone.airplane; onToggled: Phone.toggleAirplane() }
       Tile { glyph: Phone.flashlight ? "\u{f0244}" : "\u{f0245}"; focused: shade.sel === 4; label: "Torch"; on: Phone.flashlight; onToggled: Phone.toggleFlashlight() }
       Tile { glyph: Phone.rotationLock ? "\u{f0478}" : "\u{f0475}"; focused: shade.sel === 5; label: "Rotation"; on: Phone.rotationLock; onToggled: Phone.toggleRotationLock() }
-      Tile { glyph: "\u{f030c}"; focused: shade.sel === 6; label: "Keyboard"; on: Phone.keyboardOpen; onToggled: { Phone.keyboardOpen = !Phone.keyboardOpen; Phone.closeShade() } }
+      Tile { glyph: "\u{f030c}"; focused: shade.sel === 6; label: "Keyboard"; on: Phone.keyboardOpen; onToggled: { Phone.toggleKeyboard(); Phone.closeShade() } }
       Tile { glyph: "\u{f033e}"; focused: shade.sel === 7; label: "Lock"; onToggled: Phone.lock() }
     }
 

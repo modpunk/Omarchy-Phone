@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import Quickshell.Bluetooth
 
 // Shell-wide state and actions. Surfaces bind to these properties; the
 // hardware keys, gestures and IPC all end up calling these functions.
@@ -29,6 +30,73 @@ Singleton {
   property bool shadeDragging: false
   property bool switcherOpen: false
   property bool keyboardOpen: false
+  // Focus-driven state (see "On-screen keyboard" below): keyboardOpen is
+  // derived from these, never set directly by anything but this block.
+  property bool imAvailable: false     // ophone-im bound input-method-v2 (no other IME running)
+  property bool imFieldFocused: false  // a text-input is currently focused
+  property bool keyboardPinned: false     // manually forced open
+  property bool keyboardSuppressed: false // manually forced closed while still focused
+  readonly property bool hardwareKeyboardConnected: {
+    const devs = Bluetooth.devices ? Bluetooth.devices.values : []
+    for (const d of devs) if (d.connected && d.icon === "input-keyboard") return true
+    return false
+  }
+  onHardwareKeyboardConnectedChanged: updateKeyboardVisibility()
+  function updateKeyboardVisibility() {
+    keyboardOpen = keyboardPinned || (imFieldFocused && !keyboardSuppressed && !hardwareKeyboardConnected)
+  }
+  // Called by ophone-im (see the Process below) when a text-input-v3 field
+  // gains/loses focus. A hardware keyboard suppresses the auto-show only;
+  // the manual toggle (toggleKeyboard) always works regardless.
+  function imFocusIn() { imFieldFocused = true; keyboardSuppressed = false; updateKeyboardVisibility() }
+  function imFocusOut() { imFieldFocused = false; keyboardPinned = false; keyboardSuppressed = false; updateKeyboardVisibility() }
+  // SUPER+K, the nav-bar glyph and the shade tile all call this.
+  function toggleKeyboard() {
+    if (keyboardOpen) { keyboardPinned = false; keyboardSuppressed = true }
+    else { keyboardPinned = true; keyboardSuppressed = false }
+    updateKeyboardVisibility()
+  }
+  // Plain characters go through the input method when one is focused (the
+  // correct path for apps that speak text-input-v3); everything else
+  // (backspace, Enter, and anything whenever no field is focused, e.g. a
+  // terminal) still goes through wtype in Keyboard.qml -- see there for why
+  // backspace doesn't use delete_surrounding_text.
+  function imCommit(text) { if (imAvailable && imFieldFocused) imWatch.write("T" + text + "\n") }
+  // Force it closed, e.g. leaving the app entirely (home/lock): don't let a
+  // stale "still focused" reopen it next tick.
+  function resetKeyboard() { keyboardPinned = false; keyboardSuppressed = false; keyboardOpen = false }
+
+  Process {
+    id: imWatch
+    command: [shellDir + "/bin/ophone-im"]
+    running: true
+    stdinEnabled: true
+    stdout: SplitParser {
+      onRead: line => {
+        if (line === "active") { root.imAvailable = true; root.imFocusIn() }
+        else if (line === "inactive") { root.imFocusOut() }
+        else if (line === "unavailable") {
+          root.imAvailable = false
+          root.imFocusOut()
+          console.warn("omarchy-phone: another input method is already running; on-screen keyboard needs the manual toggle")
+        }
+      }
+    }
+    onExited: (code, status) => {
+      // Whatever imFieldFocused was, it's meaningless now: nothing is
+      // listening for the next real activate/deactivate until the process
+      // restarts, and Keyboard.qml must not keep routing keys at an
+      // ophone-im that isn't there (imCommit/imBackspace no-op once
+      // imAvailable is false, but imFieldFocused staying true would still
+      // leave the *visible* keyboard silently swallowing keystrokes instead
+      // of falling back to wtype).
+      imAvailable = false
+      imFocusOut()
+      if (code !== 0) imRestart.restart() // missing binary, protocol not supported, etc: back off and retry
+    }
+  }
+  Timer { id: imRestart; interval: 4000; onTriggered: { imWatch.running = false; imWatch.running = true } }
+
   property bool powerMenuOpen: false
   property bool screenOn: true
   readonly property bool anyOverlay: shade > 0 || switcherOpen || powerMenuOpen
@@ -119,7 +187,7 @@ Singleton {
     homeRequested()
     const hadOverlay = shade > 0 || switcherOpen || powerMenuOpen
     closeOverlays()
-    keyboardOpen = false
+    resetKeyboard()
     if (!hadOverlay || !atHome) hypr('hl.dsp.focus({ workspace = "' + homeWorkspace + '" })')
   }
   function showSwitcher() { if (locked) return; closeShade(); powerMenuOpen = false; switcherOpen = true }
@@ -142,7 +210,7 @@ Singleton {
   }
 
   // --- lock / screen
-  function lock() { byKey = false; closeOverlays(); keyboardOpen = false; pinVisible = false; locked = true }
+  function lock() { byKey = false; closeOverlays(); resetKeyboard(); pinVisible = false; locked = true }
   function unlock() { byKey = false; locked = false; pinVisible = false }
   function screenOff() { screenOn = false; hypr('hl.dsp.dpms({ action = "disable" })') }
   function screenOnNow() { screenOn = true; hypr('hl.dsp.dpms({ action = "enable" })') }
