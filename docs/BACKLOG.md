@@ -33,7 +33,7 @@ excludes `run.sh` from CI for the same reason). **Unverified** in this sweep.
 
 | Feature (from the product's intended set) | Where it lives | Test coverage | Status |
 |---|---|---|---|
-| Dialer / tap-to-call (in-app) | `apps/phone/omarchy_phone/ui.py` (keypad, dial buttons), `numbers.py` (detection/linkify) | `test_numbers.py` (detection, false positives), `test_calls.py` (dial flows) | **Done, in-app.** System-wide tap-to-call (outside the Phone app) is not wired — see P2 below. |
+| Dialer / tap-to-call (in-app) | `apps/phone/omarchy_phone/ui.py` (keypad, dial buttons), `numbers.py` (detection/linkify) | `test_numbers.py` (detection, false positives), `test_calls.py` (dial flows) | **Done, in-app.** System-wide tap-to-call (outside the Phone app) is now wired too, see item 3 below — clipboard trigger only, not notification bodies. |
 | Contacts (vCard import/export, favorites, groups) | `omarchy_phone/vcard.py`, `store.py`, `ui.py` Contacts tab | `test_vcard.py` (2.1/3.0/4.0 import, round trip, store merge) | **Done.** |
 | Call screening (block/allow/spam, unknown/withheld, DND) | `omarchy_phone/screening.py`, `calls.py` | `test_screening.py` (11 tests: precedence, DND+repeat caller, neighbour spoofing, emergency) | **Done.** |
 | Call groups (contact groups for DND allow-lists; call merging into a group call) | `store.py` (`groups` table), `calls.py` (`merge`/`split`) | `test_calls.py::Flows.test_group_call`, `test_screening` DND-allowed-groups cases | **Done**, local mixing only (baresip capability: up to ~4 legs); server-side conference bridging for SIP is explicitly not done — see P2. |
@@ -77,12 +77,15 @@ regression to fix in this repo (see Hardware-gated section).
    routing, and the "route before the call is restored at hangup" behavior from
    `docs/phone/DESIGN.md` §6) is entirely unverified by the suite. This is real, shipped code with
    no regression safety net.
-3. **System-wide tap-to-call has no shell hook.** `docs/phone/DESIGN.md` §4.1 describes
-   `phonectl detect` turning text selections into `tel:` links "for the shell (e.g. a
-   text-selection action)." Grepped all of `shell/` for `phonectl`: **zero matches.** The CLI
-   command exists and is tested at the unit level (`numbers.py`'s detector), but nothing in the
-   shell actually invokes it. Either build the shell-side hook or mark this DESIGN.md line as a
-   future item rather than current capability.
+3. ~~**System-wide tap-to-call has no shell hook.**~~ **Fixed** (`shell-tap-to-call` branch):
+   `Services/NumberDetect.qml` watches the clipboard with `wl-paste --watch`, running `phonectl
+   detect` on whatever gets copied, and `Surfaces/TapToCallBanner.qml` shows a "Call <number>?"
+   chip that hands the number to the Phone app's existing `tel:` entry point on tap (see
+   `docs/shell/DESIGN.md` "System-wide tap-to-call"). Opt-in and off by default
+   (`Config.tapToCallClipboard`), never shown while locked. Verified end to end in
+   `shell/preview/run.sh tapcall` (real clipboard copy inside the nested Hyprland preview, not just
+   a unit test of the detector). Not done: scanning notification bodies (the other trigger this
+   finding's `phonectl detect` line could apply to) — left as a follow-up, see `docs/shell/DESIGN.md`.
 4. **`shell/preview/run.sh` (the shell's own assertive OSK/content-purpose test scenarios) was not
    re-run in this sweep.** It's the only test surface for the on-screen-keyboard's focus-driven
    show/hide and per-content-purpose layout switching (`osknum`/`oskphone`/`oskpass`/`oskemail`/
