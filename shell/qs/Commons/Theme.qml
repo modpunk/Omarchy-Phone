@@ -47,11 +47,38 @@ Singleton {
   readonly property string motto: "Vox Libertatis"
   readonly property string productName: "Omarchy Phone"
 
+  // $XDG_STATE_HOME (falling back to $HOME/.local/state, same default the
+  // real omarchy-theme-set uses) rather than always $HOME: this also means
+  // the preview's private XDG_STATE_HOME (shell/preview/run.sh) never reads
+  // the host desktop's live theme, and a theme-swap test can point this at
+  // its own scratch dir instead of ~/.local/state.
+  readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")
+  readonly property string omarchyCurrent: stateHome + "/omarchy/current"
+  readonly property string themeDir: omarchyCurrent + "/theme"
+
+  // omarchy-theme-set swaps themes with `rm -rf current/theme; mv next-theme
+  // current/theme` (see /usr/share/omarchy/bin/omarchy-theme-set): the
+  // directory's inode is destroyed and replaced, which kills any inotify
+  // watch held on colors.toml or on the theme/ directory itself -- FileView's
+  // watchChanges never fires again after the first swap. current/theme.name
+  // survives every swap (it's written with a plain `>` redirect, in place,
+  // same inode), so that's what stays watched; its change reload()s the
+  // colors FileView by path, which re-opens (and re-reads) whatever
+  // colors.toml exists right now, sidestepping the broken watch entirely.
   FileView {
-    path: Quickshell.env("HOME") + "/.local/state/omarchy/current/theme/colors.toml"
+    id: themeNameFile
+    path: omarchyCurrent + "/theme.name"
     watchChanges: true
     printErrors: false
-    onFileChanged: reload()
+    onFileChanged: { reload(); colorsFile.reload() }
+  }
+
+  FileView {
+    id: colorsFile
+    path: themeDir + "/colors.toml"
+    // Not watched directly -- see themeNameFile above. Read on startup and
+    // whenever theme.name changes.
+    printErrors: false
     onLoaded: {
       const v = {}
       for (const line of text().split("\n")) {
