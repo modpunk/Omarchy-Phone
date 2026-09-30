@@ -110,6 +110,10 @@ around `qs -p <shell>/qs ipc call shell <fn>`):
 Silent mode is also written to `$XDG_RUNTIME_DIR/omarchy-phone/silent`
 (`on`/`off`), so you can read it without a process spawn.
 
+Lock state is written the same way, to `$XDG_RUNTIME_DIR/omarchy-phone/locked` (`on`/`off`):
+missing, unreadable, or anything other than `off` means treat the device as locked (see
+`docs/phone/API.md` → "Shell hooks" for the caller-privacy consumer).
+
 ## 5. Bluetooth pairing confirmation
 
 `shell/bin/ophone-btagentd` (registered as the system BlueZ agent -- see

@@ -4,6 +4,7 @@
 #   ophone-sys volume <0-100> | silent on|off | brightness <1-100>
 #   ophone-sys flashlight on|off | rotation-lock on|off
 #   ophone-sys reboot | poweroff | suspend
+#   ophone-sys locked on|off
 # With OPHONE_DRY_RUN=1 (the desktop preview) it only prints what it would do.
 set -uo pipefail
 run() {
@@ -23,6 +24,7 @@ case "${1:-}" in
   flashlight)    led="$(ls -d /sys/class/leds/*flash* /sys/class/leds/*torch* 2>/dev/null | head -1)"
                  [[ -n "$led" ]] && run brightnessctl -q -d "$(basename "$led")" set "$(onoff "$2" 100% 0)" ;;
   rotation-lock) echo "$2" >"$state/rotation-lock" ;;
+  locked)        echo "$2" >"$state/locked" ;;   # apps read this to gate caller-name privacy
   reboot)        run systemctl reboot ;;
   poweroff)      run systemctl poweroff ;;
   suspend)       run systemctl suspend ;;

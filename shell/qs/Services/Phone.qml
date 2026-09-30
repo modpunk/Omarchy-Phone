@@ -130,6 +130,11 @@ Singleton {
   readonly property bool atHome: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id === homeWorkspace : true
 
   // --- lock-screen PIN (docs/shell/DESIGN.md "Lock screen PIN")
+  // Fail-safe (docs/phone/API.md "Shell hooks"): $XDG_RUNTIME_DIR is per-session tmpfs, so a
+  // stale "off" from a previous run could never survive a crash -- except that it would, since
+  // nothing else clears it. Publish "on" unconditionally before boot lock state is even decided,
+  // so a crash/restart always comes back private until _decideBootLock (below) says otherwise.
+  Component.onCompleted: sys(["locked", "on"])
   readonly property string pinFile: Quickshell.env("OPHONE_PIN_FILE") || "/etc/omarchy-phone/pin-hash"
   property bool pinConfigured: false
   property bool _bootLockDecided: false
@@ -145,6 +150,7 @@ Singleton {
     if (_bootLockDecided) return
     _bootLockDecided = true
     if (!dryRun && pinConfigured) locked = true
+    sys(["locked", locked ? "on" : "off"])
   }
 
   // --- idle auto-lock (docs/shell/DESIGN.md "Idle auto-lock"): Hyprland's
@@ -229,8 +235,8 @@ Singleton {
   }
 
   // --- lock / screen
-  function lock() { byKey = false; closeOverlays(); resetKeyboard(); pinVisible = false; locked = true }
-  function unlock() { byKey = false; locked = false; pinVisible = false }
+  function lock() { byKey = false; closeOverlays(); resetKeyboard(); pinVisible = false; locked = true; sys(["locked", "on"]) }
+  function unlock() { byKey = false; locked = false; pinVisible = false; sys(["locked", "off"]) }
   function screenOff() { screenOn = false; hypr('hl.dsp.dpms({ action = "disable" })') }
   function screenOnNow() { screenOn = true; hypr('hl.dsp.dpms({ action = "enable" })') }
 
