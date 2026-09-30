@@ -226,7 +226,13 @@ never invisible, and a screened call can be allow-listed from its history row in
   the account explicitly allows it.
 - The loopback backend binds to 127.0.0.1 only.
 - Notifications on the lock screen show the caller name only if the shell says the device is unlocked;
-  the default notification body is the number or contact name without the call log.
+  the default notification body is the number or contact name without the call log. The lock state is
+  read from `$XDG_RUNTIME_DIR/omarchy-phone/locked` (`Notifier.locked_mode()` in `notify.py`), the same
+  one-way runtime-dir switch convention as the ring/silent switch (`$XDG_RUNTIME_DIR/omarchy-phone/silent`,
+  §3.2); missing, unreadable, or anything other than an exact `off` is treated as locked, so the caller
+  name is hidden by default until the shell explicitly reports `off`. **The shell does not write this
+  file yet** — `ophone-sys` has no `locked` case and `Phone.qml`'s `lock()`/`unlock()` don't call it; see
+  `docs/phone/API.md` → "Shell hooks".
 
 ## 8. UI
 

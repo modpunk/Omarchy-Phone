@@ -117,4 +117,13 @@ phoned follows `docs/shell/INTEGRATION.md`:
   the in-call page forward. Closed when the call ends.
 - Missed / screened calls → `category=call.unanswered` with `callback` / `allow` actions.
 - The ringtone is skipped when `$XDG_RUNTIME_DIR/omarchy-phone/silent` says `on`.
+- `x-ophone-caller` and the notification summary carry the real caller name only when
+  `$XDG_RUNTIME_DIR/omarchy-phone/locked` says `off`; otherwise (missing file, unreadable, any other
+  content) they carry the generic "Incoming call" instead, per `docs/phone/DESIGN.md` → "Privacy and
+  security". **Shell follow-up needed:** nothing currently writes this file. `shell/bin/ophone-sys`
+  needs a `locked on|off` case (mirroring its existing `silent on|off` case, which writes
+  `$state/silent`), and `shell/qs/Services/Phone.qml`'s `lock()` and `unlock()` functions need to call
+  it (e.g. `sys(["locked", "on"])` / `sys(["locked", "off"])`), plus the boot-time decision in
+  `_decideBootLock()`. Until that lands, every incoming-call notification shows the generic title,
+  which is the safe default but hides the caller name even when the device is actually unlocked.
 - A shell can subscribe to `Event` for anything else (e.g. `dnd`).
