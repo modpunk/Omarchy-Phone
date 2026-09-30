@@ -120,10 +120,11 @@ phoned follows `docs/shell/INTEGRATION.md`:
 - `x-ophone-caller` and the notification summary carry the real caller name only when
   `$XDG_RUNTIME_DIR/omarchy-phone/locked` says `off`; otherwise (missing file, unreadable, any other
   content) they carry the generic "Incoming call" instead, per `docs/phone/DESIGN.md` → "Privacy and
-  security". **Shell follow-up needed:** nothing currently writes this file. `shell/bin/ophone-sys`
-  needs a `locked on|off` case (mirroring its existing `silent on|off` case, which writes
-  `$state/silent`), and `shell/qs/Services/Phone.qml`'s `lock()` and `unlock()` functions need to call
-  it (e.g. `sys(["locked", "on"])` / `sys(["locked", "off"])`), plus the boot-time decision in
-  `_decideBootLock()`. Until that lands, every incoming-call notification shows the generic title,
-  which is the safe default but hides the caller name even when the device is actually unlocked.
+  security". `shell/bin/ophone-sys` has a `locked on|off` case (mirroring its `silent on|off` case,
+  which writes `$state/silent`) that writes `$state/locked`. `shell/qs/Services/Phone.qml` publishes
+  it at every lock-state transition: `lock()` writes `on`, `unlock()` writes `off`, and the boot-time
+  `_decideBootLock()` writes whichever it lands on. The shell also writes `on` unconditionally as
+  soon as it starts, before boot lock state is even decided -- `$XDG_RUNTIME_DIR` is per-session
+  tmpfs, so a stale `off` could otherwise survive a shell crash/restart and leak a caller name on an
+  actually-locked device.
 - A shell can subscribe to `Event` for anything else (e.g. `dnd`).
