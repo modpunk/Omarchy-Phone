@@ -21,6 +21,18 @@ that shaped this adapter:
 - A second hold/resume sent while the first re-INVITE is still in flight is answered ok but
   silently lost (the two ends disagree afterwards), so hold changes are serialized per call.
 - The menu has no conference command, so group calls are not offered on this backend.
+
+Registration state (Registered / Registering / Failed) is tracked two ways, per `docs/phone/API.md`:
+event-driven (`REGISTERING`/`REGISTER_OK`/`REGISTER_FAIL`/the `FALLBACK_*` equivalents, all reported
+by the `account` module regardless of ctrl_tcp) and on-demand (`reginfo`, a `menu` command that
+prints a text dump of every User-Agent's registration; ANSI-colored, so it needs stripping). We send
+`reginfo` right after connecting, both to learn the current state without waiting for baresip's next
+registration attempt (it may already be registered, e.g. reconnecting to a long-running baresip) and
+to decide whether our configured account needs to be created (`uanew`) — baresip has no persistent
+knowledge of *our* account across restarts unless it was also written to its accounts file, which we
+deliberately don't do (the password would sit in that file in the clear); the account is provisioned
+live over ctrl_tcp instead, using the account line from the keyring at daemon startup and whenever it
+is saved. Verified against baresip 4.11's `modules/menu/static_menu.c` and `src/reg.c` sources.
 """
 from __future__ import annotations
 
@@ -38,11 +50,54 @@ COMMANDS = {
     "dial": "dial", "dial_video": "dialdir", "accept": "accept", "accept_video": "acceptdir",
     "hangup": "hangup", "hold": "hold", "resume": "resume", "mute": "mute", "select": "callfind",
     "video_dir": "videodir", "dtmf": "sndcode", "transfer": "transfer",
+    "reginfo": "reginfo", "uanew": "uanew", "uadel": "uadel",
 }
 EVENT_STATES = {
     "CALL_OUTGOING": "dialing", "CALL_RINGING": "ringing", "CALL_PROGRESS": "ringing",
     "CALL_ESTABLISHED": "active",
 }
+REGISTER_OK = ("REGISTER_OK", "FALLBACK_OK")
+REGISTER_FAIL = ("REGISTER_FAIL", "FALLBACK_FAIL")
+REGISTER_EVENTS = REGISTER_OK + REGISTER_FAIL + ("REGISTERING", "UNREGISTERING")
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# "N - <aor, %-42s padded>  OK  <server, may contain spaces>  Expires 300s" (also "ERR"/"zzz", and
+# an "FB-" prefix for a fallback registrar); server is "(nil)" or missing before any attempt.
+_REGINFO_LINE = re.compile(r"^\s*\d+\s*-\s*(?P<aor>\S+)\s+(?:FB-)?(?P<code>OK|ERR|zzz)\s*(?P<rest>.*)$")
+_EXPIRES = re.compile(r"Expires\s+(\d+)s\s*$")
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text or "")
+
+
+def parse_reginfo(text: str) -> list[dict]:
+    """Parse baresip's `reginfo` text dump into `[{aor, ok, registering, srv, expires}]`."""
+    out = []
+    for line in strip_ansi(text).splitlines():
+        m = _REGINFO_LINE.match(line)
+        if not m:
+            continue
+        rest = m.group("rest").strip()
+        expires = None
+        em = _EXPIRES.search(rest)
+        if em:
+            expires = int(em.group(1))
+            rest = rest[:em.start()].strip()
+        srv = rest if rest and rest != "(nil)" else None
+        out.append({"aor": m.group("aor"), "ok": m.group("code") == "OK",
+                    "registering": m.group("code") == "zzz", "srv": srv, "expires": expires})
+    return out
+
+
+def line_aor(line: str) -> str:
+    """The bare `sip:user@host` baresip reports for an account line (its own params dropped, same
+    as `account_aor()`/`encode_uri_user()` in baresip's source: URI params are not part of the AOR)."""
+    m = re.search(r"<([^>]+)>", line)
+    uri = m.group(1) if m else line.strip()
+    return uri.split(";", 1)[0]
+
+
 # SIP status / Q.850 cause (as baresip reports them in CALL_CLOSED) -> our end reasons
 _BUSY = re.compile(r"\b(486|600)\b|busy|cause=17\b", re.I)
 _REJECTED = re.compile(r"\b(603|403)\b|declin|reject|cause=21\b", re.I)  # Asterisk: 603 -> 503 cause=21
@@ -97,6 +152,14 @@ class BaresipBackend(Backend):
         self.sock: socket.socket | None = None
         self.buf = b""
         self.token = 0
+        # account / registration
+        self.account_line: str | None = self.config.get("account_line")
+        self.account_aor: str | None = line_aor(self.account_line) if self.account_line else None
+        self._account_pushed = False        # uanew already sent for the current account_line
+        self.control_tokens: dict[str, str] = {}   # token -> "reginfo" | "uanew" | "uadel"
+        self.reg_state = "offline"
+        self.reg_detail = ""
+        self.reg_reason = ""
         self.ours: dict[str, str] = {}      # our call_id -> baresip call id
         self.theirs: dict[str, str] = {}    # baresip call id -> our call_id
         self.pending_out: list[str] = []    # dialled, baresip has not reported the call yet
@@ -126,13 +189,15 @@ class BaresipBackend(Backend):
         try:
             s = socket.create_connection((self.host, self.port), timeout=1)
         except OSError as e:
-            self.emit({"type": "registration", "ok": False, "detail": f"baresip not reachable: {e}"})
+            self._reg("offline", detail=f"baresip not reachable: {e}")
             self._retry = GLib.timeout_add_seconds(5, self._connect)
             return False
         s.setblocking(False)
         self.sock = s
         self._watch = GLib.io_add_watch(s.fileno(), GLib.PRIORITY_DEFAULT, GLib.IO_IN | GLib.IO_HUP, self._on_io)
-        self.emit({"type": "registration", "ok": True, "detail": f"baresip at {self.host}:{self.port}"})
+        self._account_pushed = False
+        self._reg("connecting", detail=f"baresip at {self.host}:{self.port}")
+        self.refresh_registration()   # learn the real state instead of assuming "connected" = registered
         return False
 
     def stop(self):
@@ -159,19 +224,20 @@ class BaresipBackend(Backend):
             for cid in list(self.ours) + self.pending_out:
                 self.emit({"type": "ended", "call_id": cid, "reason": "failed"})
             self._forget_all()
-            self.emit({"type": "registration", "ok": False, "detail": "baresip connection lost"})
+            self._reg("offline", detail="baresip connection lost")
             self._retry = GLib.timeout_add_seconds(5, self._connect)
             return False
         return True
 
     def _forget_all(self):
         for coll in (self.ours, self.theirs, self.dial_tokens, self.video_on, self.want_hold, self.sent_hold,
-                     self.reinvite):
+                     self.reinvite, self.control_tokens):
             coll.clear()
         for coll in (self.hangup_early, self.local_hold, self.remote_hold, self.established, self.closing):
             coll.clear()
         self.pending_out.clear()
         self.buf = b""
+        self._account_pushed = False
 
     def feed(self, data: bytes):
         msgs, self.buf = parse_netstrings(self.buf + data)
@@ -224,8 +290,16 @@ class BaresipBackend(Backend):
         if not ev.get("event"):
             return
         et, bid = ev.get("type", ""), ev.get("id", "")
-        if et in ("REGISTER_OK", "REGISTER_FAIL"):
-            self.emit({"type": "registration", "ok": et == "REGISTER_OK", "detail": ev.get("param", "")})
+        if et in REGISTER_EVENTS:
+            if et == "REGISTERING":
+                self._reg("registering")
+            elif et in REGISTER_OK:
+                self._account_pushed = True
+                self._reg("registered", detail=ev.get("param", ""))
+            elif et in REGISTER_FAIL:
+                self._reg("failed", reason=ev.get("param", ""))
+            # UNREGISTERING: transient (re-registering or shutting down); the next REGISTERING /
+            # REGISTER_OK / REGISTER_FAIL that follows is authoritative, so nothing to report yet.
             return
         if ev.get("class") != "call" or not bid:
             return
@@ -271,7 +345,14 @@ class BaresipBackend(Backend):
             self.emit({"type": "dtmf", "call_id": cid, "digit": ev["param"]})
 
     def _on_response(self, ev: dict):
-        cid = self.dial_tokens.pop(str(ev.get("token", "")), None)
+        tok = str(ev.get("token", ""))
+        kind = self.control_tokens.pop(tok, None)
+        if kind in ("reginfo", "uanew"):
+            self._on_reginfo(ev.get("data") or "", bool(ev.get("ok")))
+            return
+        if kind == "uadel":
+            return  # nothing to reconcile; a missing/unknown aor is not an error worth surfacing
+        cid = self.dial_tokens.pop(tok, None)
         if ev.get("ok"):
             return
         detail = (ev.get("data") or "").strip() or "baresip command failed"
@@ -280,6 +361,85 @@ class BaresipBackend(Backend):
             self.hangup_early.discard(cid)
             self.emit({"type": "ended", "call_id": cid, "reason": "failed"})
         self.emit({"type": "error", "detail": detail})
+
+    # ------------------------------------------------------------ registration
+    def _reg(self, state: str, detail: str = "", reason: str = ""):
+        self.reg_state, self.reg_detail = state, detail
+        if state == "registered":
+            self.reg_reason = ""          # a fresh success clears any earlier failure reason
+        elif reason:
+            self.reg_reason = reason
+        self.emit({"type": "registration", "state": state, "ok": state == "registered",
+                   "detail": detail, "reason": self.reg_reason if state == "failed" else ""})
+
+    def _on_reginfo(self, data: str, cmd_ok: bool):
+        if not cmd_ok:
+            self._reg("failed", reason=data.strip() or "reginfo failed")
+            return
+        entries = parse_reginfo(data)
+        if self.account_aor:  # an account we provisioned: find it by AOR, create it if missing
+            mine = next((e for e in entries if e["aor"] == self.account_aor), None)
+            if mine is None:
+                if not self._account_pushed:
+                    self._push_account()
+                else:
+                    self._reg("registering", detail="waiting for baresip to accept the account")
+                return
+            self._account_pushed = True
+        else:
+            # No account of our own configured; still reflect baresip's own state if it already has
+            # one (e.g. a hand-written accounts file, or the sipbed test image) rather than lying.
+            mine = entries[0] if entries else None
+            if mine is None:
+                self._reg("no_account", detail="no SIP account configured")
+                return
+        if mine["ok"]:
+            detail = mine["srv"] or ""
+            if mine["expires"]:
+                detail = f"{detail} · expires {mine['expires']}s" if detail else f"expires {mine['expires']}s"
+            self._reg("registered", detail=detail)
+        elif mine["registering"]:
+            self._reg("registering", detail=mine["srv"] or "")
+        else:
+            self._reg("failed", detail=mine["srv"] or "", reason=self.reg_reason or "registration rejected")
+
+    def _push_account(self):
+        tok = self.command("uanew", self.account_line)
+        self.control_tokens[tok] = "uanew"
+        self._reg("registering", detail="creating account")
+
+    def refresh_registration(self):
+        if not self.sock:
+            return
+        tok = self.command("reginfo")
+        self.control_tokens[tok] = "reginfo"
+
+    def set_account(self, line: str):
+        """Provision (or replace) the live account. Persisted only in the keyring/app settings —
+        never written to baresip's own accounts file, so this is the only place the account exists
+        once phoned restarts (or baresip does); call it again after every daemon start and save."""
+        old_aor = self.account_aor
+        self.account_line = line
+        self.account_aor = line_aor(line)
+        self._account_pushed = False
+        self.reg_reason = ""
+        if not self.sock:
+            return  # picked up by the reginfo round trip once we connect
+        if old_aor and old_aor != self.account_aor:
+            tok = self.command("uadel", old_aor)
+            self.control_tokens[tok] = "uadel"
+        self._push_account()
+
+    def clear_account(self):
+        old_aor = self.account_aor
+        self.account_line = None
+        self.account_aor = None
+        self._account_pushed = False
+        self.reg_reason = ""
+        if self.sock and old_aor:
+            tok = self.command("uadel", old_aor)
+            self.control_tokens[tok] = "uadel"
+        self._reg("no_account", detail="no SIP account configured")
 
     # ------------------------------------------------------------ operations
     def dial(self, call_id, address, video=False):

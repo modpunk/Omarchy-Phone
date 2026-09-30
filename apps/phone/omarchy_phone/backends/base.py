@@ -9,7 +9,10 @@ Events passed to `emit(event)` (dicts):
   {"type": "video", "call_id", "on"}
   {"type": "participants", "call_id", "participants": [..]}
   {"type": "ended", "call_id", "reason"}        # normal|busy|rejected|voicemail|no_answer|failed
-  {"type": "registration", "ok": bool, "detail": str}
+  {"type": "registration", "state": str, "ok": bool, "detail": str, "reason": str}
+    state one of: connecting (transport up, no verdict yet), no_account (nothing configured),
+    registering, registered, failed, offline (not connected). `ok` is `state == "registered"`,
+    kept for callers that only care about the boolean. `reason` is set on `failed`.
 """
 from __future__ import annotations
 
@@ -73,4 +76,18 @@ class Backend:
         raise BackendError("group calls not supported")
 
     def split(self, call_id: str) -> None:
+        pass
+
+    # Account / registration (SIP-like backends; no-ops elsewhere)
+    def set_account(self, line: str) -> None:
+        """Provision or replace the account. `line` is backend-specific (baresip: an accounts-file
+        line); backends that have no account concept ignore this."""
+        pass
+
+    def clear_account(self) -> None:
+        pass
+
+    def refresh_registration(self) -> None:
+        """Ask the backend to re-check its registration state now (in addition to whatever it
+        reports on its own); a no-op where there is nothing to check."""
         pass

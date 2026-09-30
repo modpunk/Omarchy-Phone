@@ -57,7 +57,8 @@ class LoopbackBackend(Backend):
             json.dump({"port": port, "number": self.number, "name": self.display, "pid": os.getpid()}, f)
         os.replace(tmp, self._reg_path(self.profile))
         self._watch = GLib.io_add_watch(self.sock.fileno(), GLib.PRIORITY_DEFAULT, GLib.IO_IN, self._on_readable)
-        emit({"type": "registration", "ok": True, "detail": f"loop:{self.profile} on 127.0.0.1:{port}"})
+        emit({"type": "registration", "state": "registered", "ok": True,
+              "detail": f"loop:{self.profile} on 127.0.0.1:{port}"})
 
     def stop(self):
         for call_id in list(self.peers):

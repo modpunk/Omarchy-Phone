@@ -237,11 +237,25 @@ class CallManager:
         self.emit({"type": "audio", "speaker": self.speaker, "route": route})
         return route
 
+    # ------------------------------------------------------------ account / registration
+    def refresh_registration(self, backend_id: str | None = None):
+        targets = [self.backends[backend_id]] if backend_id else self.backends.values()
+        for b in targets:
+            b.refresh_registration()
+
+    def apply_account(self, backend_id: str, line: str):
+        self.backends[backend_id].set_account(line)
+
+    def clear_account(self, backend_id: str):
+        self.backends[backend_id].clear_account()
+
     # ------------------------------------------------------------ backend events
     def _on_backend(self, backend: Backend, ev: dict):
         t = ev.get("type")
         if t == "registration":
-            self.registration[backend.id] = {"ok": ev.get("ok"), "detail": ev.get("detail", "")}
+            state = ev.get("state") or ("registered" if ev.get("ok") else "failed")
+            self.registration[backend.id] = {"state": state, "ok": bool(ev.get("ok")),
+                                             "detail": ev.get("detail", ""), "reason": ev.get("reason", "")}
             self.emit({"type": "registration", "backend": backend.id, **self.registration[backend.id]})
             return
         if t == "error":

@@ -82,10 +82,15 @@ class Backend:
     def set_video(self, call_id, on): ...              # SIP re-INVITE / MatrixRTC track publish
     def send_dtmf(self, call_id, digits): ...
     def merge(self, call_ids) -> str: ...              # returns the conference id (group call)
+    def set_account(self, line): ...                   # provision/replace the account; no-op if n/a
+    def clear_account(self): ...
+    def refresh_registration(self): ...                # ask for a fresh registration check, if it has one
 ```
 
 Events flowing up: `incoming {call_id, remote, display_name, video}`, `state {call_id, state}`,
-`video {call_id, on}`, `participants {call_id, list}`, `ended {call_id, reason}`. Call states:
+`video {call_id, on}`, `participants {call_id, list}`, `ended {call_id, reason}`,
+`registration {state, ok, detail, reason}` (`state` one of `connecting`, `no_account`, `registering`,
+`registered`, `failed`, `offline`; see `docs/phone/API.md` → "Registration"). Call states:
 `dialing → ringing(outgoing) → active ⇄ held → ended`, or `incoming → active | ended`.
 
 ## 3. Architecture
@@ -212,9 +217,13 @@ never invisible, and a screened call can be allow-listed from its history row in
 - No telemetry, no cloud contact sync by default; contacts, history and spam lists stay in SQLite on the
   device. Export is an explicit vCard file.
 - Clipboard access is opt-in and only while the app is focused.
-- SIP credentials are read from the Secret Service (libsecret) keyring, never written into the
-  database. SIP uses TLS transport and SRTP (DTLS-SRTP or ZRTP) — the backend refuses unencrypted
-  media unless the account explicitly allows it.
+- SIP credentials are read from the Secret Service (`gi.repository.Secret`, i.e. libsecret; see
+  `omarchy_phone/keyring.py`), never written into the database or into a file — including baresip's
+  own accounts file, which is why the account is provisioned into a running baresip live over
+  ctrl_tcp (`uanew`/`uadel`) instead: see `docs/phone/API.md` → "SIP account". The non-secret fields
+  (display name, username, domain, proxy, transport) live in Store settings like everything else.
+  SIP uses TLS transport and SRTP (DTLS-SRTP or ZRTP) — the backend refuses unencrypted media unless
+  the account explicitly allows it.
 - The loopback backend binds to 127.0.0.1 only.
 - Notifications on the lock screen show the caller name only if the shell says the device is unlocked;
   the default notification body is the number or contact name without the call log.
@@ -245,8 +254,10 @@ Screens (bottom tab bar):
   video, hold, add call, merge, end. Participant list in group calls. Video tiles when video is on.
 - **Incoming** — full-screen: caller, screening reason if any; Answer, Answer with video, Decline,
   Voicemail. Also mirrored as a notification with actions.
-- **Settings** — account/backend, DND toggle and policy, unknown/withheld/spam policies, block-list and
-  allow-list editors, clipboard detection toggle.
+- **Settings** — own number/region, backend registration status, DND toggle and policy,
+  unknown/withheld/spam policies, block-list and allow-list editors, clipboard detection toggle,
+  and a **SIP account** sub-page (add/edit/remove: display name, username, domain/registrar,
+  password, outbound proxy, transport).
 
 ## 9. v0.1 scope and next steps
 
@@ -260,20 +271,29 @@ paste and opt-in clipboard detection; PipeWire route listing/switching incl. Blu
 notifications per the shell contract; the phone-size UI (screenshots in `docs/phone/screenshots/`).
 
 SIP through baresip (v0.2): calls placed and received by the app through a real Asterisk, with audio
-carried end to end (sine-tone source and WAV sink, so no sound devices are used); see §2.2.
+carried end to end (sine-tone source and WAV sink, so no sound devices are used); see §2.2. A
+Settings → SIP account page adds/edits/removes the account (keyring password, live over ctrl_tcp;
+see `docs/phone/API.md` → "SIP account"), and `registration` reports real Registered / Registering /
+Failed(reason) state (`reginfo` + the `REGISTER_OK`/`REGISTER_FAIL`/... events), not just "ctrl_tcp
+connected".
 
 Not done yet: media on the loopback backend (no RTP elements in this GStreamer install), group calls
 over SIP (baresip's menu has no conference command; needs a server-side bridge such as ConfBridge),
 dialling short PBX extensions from the keypad (only E.164 numbers and `sip:` URIs are accepted),
 diverting a *ringing* SIP call to a voicemail URI (ctrl_tcp cannot send a 302; busy is used, which
 PBXs forward to voicemail), video over SIP (untested: the test bed has no video modules), TLS/SRTP
-in the test bed, voicemail recording/playback, video rendering, SIP account setup UI (credentials via
-libsecret), MatrixRTC.
+in the test bed, voicemail recording/playback, video rendering, re-provisioning the SIP account
+automatically if baresip itself is restarted without phoned noticing (today it happens on phoned's
+own next connect), TLS/SRTP policy in the account page (transport is exposed; SRTP/ZRTP is not yet),
+MatrixRTC.
 
 Next steps, in order:
 
 1. ~~Run the baresip backend against a local Asterisk in a container~~ (done, `tests/test_sip.py`).
-2. SIP account page (server, user, libsecret password, TLS/SRTP policy) that writes baresip's config.
+2. ~~SIP account page (server, user, libsecret password, TLS/SRTP policy) that writes baresip's
+   config~~ (done: `apps/phone/omarchy_phone/sip_account.py` + `keyring.py`, Settings → SIP account;
+   provisioned live over ctrl_tcp rather than written to baresip's config file, to keep the password
+   out of any plaintext file — see §7; TLS/SRTP policy beyond the transport choice is still open).
 3. Media on the loopback backend (opus over UDP via GStreamer once `gst-plugins-good` is installed),
    so audio routing and mute can be tested end to end.
 4. Voicemail store and playback; video preview/rendering via `pipewiresrc` and a GTK paintable sink.
