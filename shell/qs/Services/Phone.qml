@@ -56,12 +56,12 @@ Singleton {
     else { keyboardPinned = true; keyboardSuppressed = false }
     updateKeyboardVisibility()
   }
-  // Plain characters and backspace go through the input method when one is
-  // focused (the correct path for apps that speak text-input-v3); anything
-  // else (Enter, arrows, and everything whenever no field is focused, e.g.
-  // a terminal) still goes through wtype in Keyboard.qml.
+  // Plain characters go through the input method when one is focused (the
+  // correct path for apps that speak text-input-v3); everything else
+  // (backspace, Enter, and anything whenever no field is focused, e.g. a
+  // terminal) still goes through wtype in Keyboard.qml -- see there for why
+  // backspace doesn't use delete_surrounding_text.
   function imCommit(text) { if (imAvailable && imFieldFocused) imWatch.write("T" + text + "\n") }
-  function imBackspace() { if (imAvailable && imFieldFocused) imWatch.write("B\n") }
   // Force it closed, e.g. leaving the app entirely (home/lock): don't let a
   // stale "still focused" reopen it next tick.
   function resetKeyboard() { keyboardPinned = false; keyboardSuppressed = false; keyboardOpen = false }
@@ -77,12 +77,21 @@ Singleton {
         else if (line === "inactive") { root.imFocusOut() }
         else if (line === "unavailable") {
           root.imAvailable = false
+          root.imFocusOut()
           console.warn("omarchy-phone: another input method is already running; on-screen keyboard needs the manual toggle")
         }
       }
     }
     onExited: (code, status) => {
+      // Whatever imFieldFocused was, it's meaningless now: nothing is
+      // listening for the next real activate/deactivate until the process
+      // restarts, and Keyboard.qml must not keep routing keys at an
+      // ophone-im that isn't there (imCommit/imBackspace no-op once
+      // imAvailable is false, but imFieldFocused staying true would still
+      // leave the *visible* keyboard silently swallowing keystrokes instead
+      // of falling back to wtype).
       imAvailable = false
+      imFocusOut()
       if (code !== 0) imRestart.restart() // missing binary, protocol not supported, etc: back off and retry
     }
   }

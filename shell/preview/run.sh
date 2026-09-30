@@ -208,11 +208,18 @@ scenario() {
       ipc typeText "hi"
       wait_for_log "TEXT:hi" || true
       assert_has "typed text reaches the field via the input method" "TEXT:hi" "$(cat "$LOG/apps.out")"
+      key -k BackSpace   # backspace stays a real key event even with an IM bound (see Keyboard.qml)
+      assert_eq "backspace (wtype) still reaches the field with an input method bound" "TEXT:h" "$(tail -1 "$LOG/apps.out")"
       bind keyboard; sleep 0.3   # manual toggle: hide it while the field is still focused
       assert_eq "manual toggle hides it even though the field is still focused" "false" "$(ipc isKeyboardOpen)"
       shot 23-osk-manual-hide 0.3
       bind keyboard; sleep 0.3   # manual toggle again: show it back
       assert_eq "manual toggle re-shows it" "true" "$(ipc isKeyboardOpen)"
+      # Prove the pure protocol path too: killing the app (not "home") means
+      # a real deactivate/done arrives, not just resetKeyboard() short-circuiting.
+      kill "${PIDS[-1]}" 2>/dev/null || true
+      wait_for isKeyboardOpen false || true
+      assert_eq "the app dying (a real deactivate) closes it, and clears the manual pin" "false" "$(ipc isKeyboardOpen)"
       ctl home; sleep 0.5
       assert_eq "leaving the app (home) closes it" "false" "$(ipc isKeyboardOpen)"
       ;;
@@ -225,6 +232,8 @@ scenario() {
       assert_eq "foot auto-shows too (it supports text-input-v3 for IME composition)" "true" "$(ipc isKeyboardOpen)"
       ipc typeText "ls"; sleep 0.3
       shot 24-osk-foot-auto 0.3
+      key -k BackSpace   # delete_surrounding_text is a no-op in foot; this is why bksp always uses wtype
+      shot 25-osk-foot-backspace 0.3
       bind keyboard; sleep 0.3
       assert_eq "manual toggle still hides it" "false" "$(ipc isKeyboardOpen)"
       bind keyboard; sleep 0.3

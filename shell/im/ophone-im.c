@@ -6,11 +6,9 @@
  * focused. It does not draw anything and does not grab the hardware
  * keyboard: the on-screen keyboard is still QML (Surfaces/Keyboard.qml) and
  * still types most keys via wtype/virtual-keyboard-v1. This helper only
- * exists so the shell *knows* when to show/hide, and so plain characters and
- * backspace can go through commit_string/delete_surrounding_text instead of
- * synthetic key events, which is the correct path for an input method and
- * works in apps (GTK4, Chromium/Electron, most Qt) that don't otherwise
- * react to virtual key events reliably.
+ * exists so the shell *knows* when to show/hide, and so plain characters can
+ * go through commit_string instead of a synthetic key event, which is the
+ * correct path for an input method to insert text.
  *
  * Protocol on stdout, one line per state change (emitted only once the
  * compositor confirms it with a "done", per the spec -- activate/deactivate
@@ -24,7 +22,13 @@
  * Commands on stdin, one per line:
  *   T<text>       commit <text> (rest of the line, no embedded newline) at
  *                 the cursor
- *   B             delete one byte before the cursor (backspace)
+ *   B             delete one byte before the cursor (backspace). Not
+ *                 currently sent by the shell: delete_surrounding_text is
+ *                 the protocol-correct way to delete, but foot -- despite
+ *                 speaking text-input-v3 for IME composition -- doesn't act
+ *                 on it, so Keyboard.qml uses a real BackSpace key event
+ *                 (wtype) for every app instead. Kept for the apps that do
+ *                 honor it (confirmed working in GTK4).
  * Both are no-ops (silently ignored) while inactive.
  */
 
