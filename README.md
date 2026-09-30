@@ -30,7 +30,7 @@ real calls there yet.
 | Component | What it is | State |
 |---|---|---|
 | `shell/` | The phone shell for Hyprland (QuickShell): status bar, home screen and app grid, dock, gesture nav bar, pull-down shade with quick settings, app switcher, PIN lock screen, incoming-call screen, volume OSD, power menu, on-screen keyboard. Hardware keys: home (press, double-press), power (lock, long-press menu), volume, ring switch. | Runs on the iPhone 6s; in review in [#2](https://github.com/modpunk/Omarchy-Phone/pull/2) |
-| `apps/phone/` | The Phone app (GTK4 + libadwaita) and `phoned` daemon: calls over Wi-Fi through a pluggable backend (SIP via baresip first, MatrixRTC planned), contacts with vCard import/export, favourites and groups, recents, keypad, call screening (block/allow/spam lists, unknown and withheld caller policies, do-not-disturb), tap-to-call on detected numbers, voice/video switching, group calls, PipeWire audio routing. | Works on the loopback test backend (48 tests pass); in review in [#3](https://github.com/modpunk/Omarchy-Phone/pull/3) |
+| `apps/phone/` | The Phone app (GTK4 + libadwaita) and `phoned` daemon: calls over Wi-Fi through a pluggable backend (SIP via baresip first, MatrixRTC planned), contacts with vCard import/export, favourites and groups, recents, keypad, call screening (block/allow/spam lists, unknown and withheld caller policies, do-not-disturb), tap-to-call on detected numbers, voice/video switching, group calls, PipeWire audio routing. | Works on the loopback test backend (143 tests pass); in review in [#3](https://github.com/modpunk/Omarchy-Phone/pull/3) |
 | `brand/` | The Omarchy Phone logo, mark, wordmark, app icons and social preview. | Done |
 
 ## Try it on a phone
