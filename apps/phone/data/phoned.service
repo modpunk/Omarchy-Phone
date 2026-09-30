@@ -1,0 +1,13 @@
+# systemd user unit for the Omarchy Phone daemon. Install to ~/.config/systemd/user/ (not done automatically).
+[Unit]
+Description=Omarchy Phone daemon
+PartOf=graphical-session.target
+After=pipewire.service
+
+[Service]
+ExecStart=%h/.local/bin/phoned --backend sip --ui-cmd omarchy-phone
+Restart=on-failure
+Nice=-5
+
+[Install]
+WantedBy=graphical-session.target

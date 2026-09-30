@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Phone
+Comment=Calls over Wi-Fi (SIP), contacts and call screening
+Exec=omarchy-phone %u
+Icon=call-start-symbolic
+Categories=Network;Telephony;
+MimeType=x-scheme-handler/tel;x-scheme-handler/sip;x-scheme-handler/callto;
+StartupNotify=true
+Keywords=call;dial;contacts;voip;sip;

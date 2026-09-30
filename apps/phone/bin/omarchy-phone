@@ -1,0 +1,5 @@
+#!/bin/sh
+# Omarchy Phone: run from the source tree (no install needed).
+here=$(dirname "$(readlink -f "$0")")
+export PYTHONPATH="$here/..${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -W ignore::DeprecationWarning -m omarchy_phone.ui "$@"
