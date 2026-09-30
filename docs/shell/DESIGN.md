@@ -445,6 +445,44 @@ child process and reads one line per state change from its stdout:
 | `inactive` | none is |
 | `unavailable` | another input method is already bound to this seat (e.g. fcitx5); auto show/hide is disabled and only the manual toggle works |
 
+**Layout follows content purpose.** `ophone-im` also decodes the
+`content_type` event (`zwp_text_input_v3.content_purpose`/`content_hint`,
+per `text-input-unstable-v3.xml` -- the input-method-v2 protocol only
+*references* that enum, it doesn't define it, so the values are `#define`d
+in `ophone-im.c` rather than generated) and prints `content <name>` right
+before `active`, and again whenever it changes while a field stays focused:
+
+| `content` name | Purpose/hint it covers | Keyboard.qml layout |
+|---|---|---|
+| `normal` | `normal`, and anything not special-cased below (`alpha`, `name`, `date`, `time`, `datetime`, `terminal`) | full QWERTY |
+| `numeric` | `digits`, `number` | compact keypad: 1-9, `.`, 0, Backspace, Enter |
+| `phone` | `phone` | dial pad: 1-9, `+ * 0 # `, Backspace (no Enter -- a phone number is dialed by the app's own call button) |
+| `email` | `email` | full QWERTY, bottom row swaps `,`/`.` for `@`/`.com` |
+| `url` | `url` | full QWERTY, bottom row swaps `,`/`.` for `/`/`.com` |
+| `password` | `password`, `pin`, or either of the `hidden_text`/`sensitive_data` hints regardless of purpose | full QWERTY (passwords need the full character set) plus a small lock glyph |
+
+`ophone-im` resets its pending purpose/hint to `normal`/none on every
+`activate`, before any `content_type` the new field sends: `enable()` on
+the text-input-v3 side does the same, and without this a password field's
+purpose could otherwise leak into the next field that never calls
+`set_content_type` (most don't). `Services/Phone.qml` exposes the decoded
+name as `imPurpose` (reset to `normal` in `imFocusOut`, alongside the rest
+of the focus-driven state) and derives `keyboardLayout` from it;
+`Surfaces/Keyboard.qml` reads that and switches its row set, resetting
+shift/caps/symbols on every switch. Every layout is exactly four rows, so
+`implicitHeight`/`exclusiveZone` -- and how much the focused app shrinks --
+never changes when the field does. `password` isn't a separate layout, only
+a `masked` flag gating the lock glyph: there's no per-character preview or
+clipboard affordance anywhere in this keyboard to disable for it (nothing
+in the shell renders typed text or offers paste), so masking what's
+*displayed* stays the focused app's job, exactly as it already is for any
+other on-screen or hardware keyboard -- a `text-input-v3` widget with
+`purpose=password` renders dots itself (e.g. `GtkEntry.set_visibility(False)`).
+The `content` line and `keyboardLayout` derivation are the enforcement
+point if a preview/clipboard feature is ever added to this keyboard.
+`shell.qml`'s `IpcHandler` exposes `keyboardLayout()`/`contentPurpose()` for
+tests.
+
 `zwp_input_method_v2` is a real Wayland protocol object, not a heuristic:
 GTK4, Chromium/Electron and most Qt apps create a `text-input-v3` object and
 call `enable()`/`disable()` on it as focus moves, and **foot also speaks it**
@@ -485,10 +523,7 @@ fight the shell's own themed keyboard. wvkbd doesn't watch input-method-v2 at
 all (X11-style: always visible, manually toggled) and isn't in Arch Linux ARM's
 repos (AUR only). ophone-im links only `libwayland-client`, which quickshell
 already depends on, so it adds no new runtime package and costs about 1 MB
-RSS. Next step: use the `content_type` event (purpose/hint, already received
-and currently ignored) to switch to a numeric layout for phone-number/digit
-fields, and to skip showing a preview of typed characters for password
-fields.
+RSS.
 
 ### Theme
 
@@ -645,12 +680,19 @@ Focus-driven on-screen-keyboard scenarios:
 | oskfoot: foot auto-shows it too, typed text reaches the terminal | ![](screenshots/24-osk-foot-auto.png) |
 | oskfoot: backspace (wtype) still deletes, unlike delete_surrounding_text | ![](screenshots/25-osk-foot-backspace.png) |
 
+Content-purpose layout scenarios (`run.sh oskcontent` runs all five; each
+asserts `ipc keyboardLayout`, not just the screenshot):
+
+| Scenario | Screenshot |
+|---|---|
+| osknum: a `digits`-purpose field gets the compact numeric keypad | ![](screenshots/26-osk-numeric.png) |
+| oskphone: a `phone`-purpose field gets the dial pad (digits, `+ * #`) | ![](screenshots/27-osk-phone.png) |
+| oskpass: a `password`-purpose field gets QWERTY plus the lock glyph | ![](screenshots/28-osk-password.png) |
+| oskemail: an `email`-purpose field gets QWERTY with `@`/`.com` keys | ![](screenshots/29-osk-email.png) |
+| oskurl: a `url`-purpose field gets QWERTY with `/`/`.com` keys | ![](screenshots/30-osk-url.png) |
+
 ## Non-goals (v1) and next steps
 
-* Purpose-aware keyboard layouts (a numeric pad for phone-number/digit
-  fields, hiding typed characters for passwords): the `content_type` event
-  already arrives at `ophone-im` with this information: it's just not used
-  yet.
 * Auto-rotation (iio-sensor-proxy to monitor `transform`, respecting the
   rotation-lock tile).
 * Cellular modem (ModemManager), SMS, and a settings app.

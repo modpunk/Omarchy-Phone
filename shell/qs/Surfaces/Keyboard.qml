@@ -11,6 +11,17 @@ import qs.Widgets
 // shade tile). Types through the input method when a text field is focused,
 // wtype (zwp_virtual_keyboard_v1) otherwise. Never takes keyboard focus
 // itself.
+//
+// Layout follows the focused field's content purpose (Phone.keyboardLayout,
+// derived from Phone.imPurpose -- see Services/Phone.qml and
+// shell/im/ophone-im.c, which decodes it from the input-method-v2
+// content_type event): a compact numeric keypad for digits/number fields, a
+// phone dial pad for phone/tel fields, full QWERTY with an email/url
+// convenience key otherwise, and full QWERTY (with a lock glyph, no other
+// change) for password fields -- passwords need the full character set, so
+// there's no separate "password layout", just a masked flag. Every layout
+// is exactly four rows, so implicitHeight/exclusiveZone -- and how much the
+// app shrinks -- never changes when the focused field changes.
 PanelWindow {
   id: kb
   visible: Phone.keyboardOpen && !Phone.locked
@@ -26,20 +37,70 @@ PanelWindow {
   property bool caps: false
   property bool symbols: false
 
-  readonly property var letters: [
+  readonly property string layout: Phone.keyboardLayout // qwerty | numeric | phone | email | url | password
+  // Passwords still type through the normal QWERTY rows (see above): this
+  // just gates the lock glyph. Nothing in this shell shows a preview of
+  // typed characters or offers clipboard paste today, so there is nothing
+  // else to mask/disable here -- the masking of what's on screen is the
+  // focused app's own job (a text-input-v3 widget with purpose=password
+  // renders dots, e.g. GtkEntry's visibility=false); this flag is the gate
+  // for if either is ever added to the shell's own keyboard.
+  readonly property bool masked: layout === "password"
+  // A fresh field means a fresh keyboard state: a caps-locked or symbols
+  // page left over from the previous field must not bleed into this one.
+  onLayoutChanged: { shift = false; caps = false; symbols = false }
+
+  readonly property var lettersBase: [
     ["q","w","e","r","t","y","u","i","o","p"],
     ["a","s","d","f","g","h","j","k","l"],
-    ["shift","z","x","c","v","b","n","m","bksp"],
-    ["sym",",","space",".","enter"]
+    ["shift","z","x","c","v","b","n","m","bksp"]
   ]
+  // Bottom row varies by purpose: a plain comma/period, or a convenience
+  // key for the punctuation an email/URL needs most (like a phone OSK).
+  readonly property var row4Normal: ["sym", ",", "space", ".", "enter"]
+  readonly property var row4Email: ["sym", "@", "space", ".com", "enter"]
+  readonly property var row4Url: ["sym", "/", "space", ".com", "enter"]
+  readonly property var letters: lettersBase.concat([
+    layout === "email" ? row4Email : layout === "url" ? row4Url : row4Normal
+  ])
   readonly property var syms: [
     ["1","2","3","4","5","6","7","8","9","0"],
     ["@","#","$","_","&","-","+","(",")"],
     ["=","*","\"","'",":",";","!","?","bksp"],
     ["abc","/","space","~","enter"]
   ]
-  readonly property var rows: symbols ? syms : letters
-  readonly property real keyW: (width - Theme.px(6) * 11) / 10
+  // digits/number purposes: a compact keypad (no letters, no symbols page
+  // -- "." covers "number"'s decimal/sign case; a plain digits field just
+  // won't need it). No Enter/Backspace-only row wider than the digit rows:
+  // every row here fits within numericCols, so every key is the same size
+  // (see widthOf) and nothing overflows the panel.
+  readonly property var numericRows: [
+    ["1","2","3"],
+    ["4","5","6"],
+    ["7","8","9"],
+    [".","0","bksp","enter"]
+  ]
+  readonly property int numericCols: 4
+  // phone/tel purpose: a classic dial pad, digits plus + * # (no Enter --
+  // a phone-number field is dialed by the app's own call button, not a
+  // keyboard Return; Backspace still edits a mis-dialed digit).
+  readonly property var phoneRows: [
+    ["1","2","3"],
+    ["4","5","6"],
+    ["7","8","9"],
+    ["+","*","0","#","bksp"]
+  ]
+  readonly property int phoneCols: 5
+  readonly property var rows: {
+    if (layout === "numeric") return numericRows
+    if (layout === "phone") return phoneRows
+    return symbols ? syms : letters // qwerty, password, email, url
+  }
+  // The qwerty-family layouts are 10 columns wide; the digit pads size
+  // their (uniform-width, see widthOf) keys off their own widest row
+  // instead, so nothing overflows the panel.
+  readonly property int cols: layout === "numeric" ? numericCols : layout === "phone" ? phoneCols : 10
+  readonly property real keyW: (width - Theme.px(6) * (cols + 1)) / cols
 
   // A focused text-input-v3 field (GTK4, Chromium/Electron, most Qt) gets
   // plain characters through the input method (ophone-im, Services/Phone.qml)
@@ -61,7 +122,10 @@ PanelWindow {
       if (Phone.imFieldFocused) Phone.imCommit(" "); else Quickshell.execDetached(["wtype", " "])
       return
     }
-    const ch = (shift || caps) ? k.toUpperCase() : k
+    // .com (or any future multi-char convenience key) commits/types as a
+    // literal string either way (commit_string and wtype's text argument
+    // both take more than one character); only single letters case-shift.
+    const ch = (shift || caps) && k.length === 1 ? k.toUpperCase() : k
     if (Phone.imFieldFocused) Phone.imCommit(ch); else Quickshell.execDetached(["wtype", "--", ch])
     if (shift && !caps) shift = false
   }
@@ -78,8 +142,13 @@ PanelWindow {
   }
   function widthOf(k) {
     if (k === "space") return keyW * 4 + Theme.px(6) * 3
-    if (k === "shift" || k === "bksp") return keyW * 1.45
-    if (k === "sym" || k === "abc" || k === "enter") return keyW * 1.9
+    // Only the qwerty-family layouts (cols === 10) widen bksp/shift/enter:
+    // the numeric/phone pads keep every key the same size, sized to their
+    // own widest row (see cols), so nothing overflows the panel.
+    if (cols === 10) {
+      if (k === "shift" || k === "bksp") return keyW * 1.45
+      if (k === "sym" || k === "abc" || k === "enter" || k === ".com") return keyW * 1.9
+    }
     return keyW
   }
 
@@ -108,7 +177,7 @@ PanelWindow {
               anchors.centerIn: parent
               text: kb.label(parent.modelData)
               color: Theme.foreground
-              font.family: parent.special && parent.modelData !== "sym" && parent.modelData !== "abc" ? Theme.fontFamily : Theme.textFamily
+              font.family: parent.special && parent.modelData !== "sym" && parent.modelData !== "abc" && parent.modelData !== ".com" ? Theme.fontFamily : Theme.textFamily
               font.pixelSize: Theme.font(parent.special ? 16 : 19)
             }
             TapHandler { id: tap; onTapped: kb.type(parent.modelData) }
@@ -116,5 +185,18 @@ PanelWindow {
         }
       }
     }
+  }
+
+  // Password fields: no separate layout, just this badge -- proof (to the
+  // user, and to the preview screenshot) that the shell recognized the
+  // field, next to the keys it leaves alone.
+  Glyph {
+    visible: kb.masked
+    anchors.top: parent.top
+    anchors.right: parent.right
+    anchors.margins: Theme.px(6)
+    text: "\u{f033e}"
+    size: 14
+    color: Theme.dim
   }
 }

@@ -36,6 +36,23 @@ Singleton {
   property bool imFieldFocused: false  // a text-input is currently focused
   property bool keyboardPinned: false     // manually forced open
   property bool keyboardSuppressed: false // manually forced closed while still focused
+  // The focused field's content purpose, as decoded by ophone-im from the
+  // input-method-v2 content_type event (see shell/im/ophone-im.c): one of
+  // normal, numeric, phone, email, url, password. "normal" whenever nothing
+  // is focused or the field never set a purpose (most fields never do).
+  property string imPurpose: "normal"
+  // Keyboard.qml's layout choice, derived from imPurpose. A manual toggle or
+  // hardware keyboard never changes this: it only affects keyboardOpen.
+  readonly property string keyboardLayout: {
+    switch (imPurpose) {
+      case "numeric": return "numeric"
+      case "phone": return "phone"
+      case "password": return "password"
+      case "email": return "email"
+      case "url": return "url"
+      default: return "qwerty"
+    }
+  }
   readonly property bool hardwareKeyboardConnected: {
     const devs = Bluetooth.devices ? Bluetooth.devices.values : []
     for (const d of devs) if (d.connected && d.icon === "input-keyboard") return true
@@ -49,7 +66,7 @@ Singleton {
   // gains/loses focus. A hardware keyboard suppresses the auto-show only;
   // the manual toggle (toggleKeyboard) always works regardless.
   function imFocusIn() { imFieldFocused = true; keyboardSuppressed = false; updateKeyboardVisibility() }
-  function imFocusOut() { imFieldFocused = false; keyboardPinned = false; keyboardSuppressed = false; updateKeyboardVisibility() }
+  function imFocusOut() { imFieldFocused = false; keyboardPinned = false; keyboardSuppressed = false; imPurpose = "normal"; updateKeyboardVisibility() }
   // SUPER+K, the nav-bar glyph and the shade tile all call this.
   function toggleKeyboard() {
     if (keyboardOpen) { keyboardPinned = false; keyboardSuppressed = true }
@@ -75,6 +92,7 @@ Singleton {
       onRead: line => {
         if (line === "active") { root.imAvailable = true; root.imFocusIn() }
         else if (line === "inactive") { root.imFocusOut() }
+        else if (line.startsWith("content ")) { root.imPurpose = line.slice(8) }
         else if (line === "unavailable") {
           root.imAvailable = false
           root.imFocusOut()

@@ -18,6 +18,18 @@
  *   unavailable   another input method is already bound to this seat; this
  *                 process prints this once and exits. The shell falls back
  *                 to manual-toggle-only (wtype) behaviour.
+ *   content <name>  the focused field's content purpose, decoded from the
+ *                 zwp_text_input_v3 content_type event (purpose + hint,
+ *                 values per text-input-unstable-v3.xml -- not re-vendored
+ *                 here since the input-method-v2 xml only *references* that
+ *                 enum, it doesn't define it; wayland-scanner therefore
+ *                 emits no constants for it, hence the #defines below).
+ *                 Emitted right before "active" when a field gains focus,
+ *                 and again whenever it changes while focused. name is one
+ *                 of: normal, numeric, phone, email, url, password. Reset
+ *                 to "normal" on every activate before the field's own
+ *                 content_type (if any) arrives, so a purpose from the
+ *                 previous field never leaks into one that doesn't set it.
  *
  * Commands on stdin, one per line:
  *   T<text>       commit <text> (rest of the line, no embedded newline) at
@@ -50,6 +62,48 @@ static int pending_active;
 static int active = -1; /* -1: unknown yet, forces the first report */
 static uint32_t done_count;
 
+/* zwp_text_input_v3.content_purpose (text-input-unstable-v3.xml) */
+#define PURPOSE_NORMAL   0
+#define PURPOSE_ALPHA    1
+#define PURPOSE_DIGITS   2
+#define PURPOSE_NUMBER   3
+#define PURPOSE_PHONE    4
+#define PURPOSE_URL      5
+#define PURPOSE_EMAIL    6
+#define PURPOSE_NAME     7
+#define PURPOSE_PASSWORD 8
+#define PURPOSE_PIN      9
+#define PURPOSE_DATE     10
+#define PURPOSE_TIME     11
+#define PURPOSE_DATETIME 12
+#define PURPOSE_TERMINAL 13
+/* zwp_text_input_v3.content_hint (bitfield, same file) */
+#define HINT_HIDDEN_TEXT   0x40
+#define HINT_SENSITIVE_DATA 0x80
+
+/* Pending (double-buffered, per zwp_input_method_v2's "done" semantics) and
+ * current content purpose/hint, plus the name last emitted so we only print
+ * a line when it actually changes. */
+static uint32_t pending_purpose, pending_hint;
+static uint32_t cur_purpose, cur_hint;
+static char last_content[16] = "";
+
+static const char *content_name(uint32_t purpose, uint32_t hint) {
+  /* password and pin both hide characters; either sensitivity hint does
+   * too, in case an app sets it without purpose=password (some do). */
+  if (purpose == PURPOSE_PASSWORD || purpose == PURPOSE_PIN ||
+      (hint & (HINT_HIDDEN_TEXT | HINT_SENSITIVE_DATA)))
+    return "password";
+  switch (purpose) {
+    case PURPOSE_DIGITS:
+    case PURPOSE_NUMBER: return "numeric";
+    case PURPOSE_PHONE:  return "phone";
+    case PURPOSE_EMAIL:  return "email";
+    case PURPOSE_URL:    return "url";
+    default:             return "normal";
+  }
+}
+
 static void emit(const char *line) {
   printf("%s\n", line);
   fflush(stdout);
@@ -57,18 +111,43 @@ static void emit(const char *line) {
 
 /* --- zwp_input_method_v2 listener ------------------------------------- */
 
-static void im_activate(void *d, struct zwp_input_method_v2 *o) { (void)d; (void)o; pending_active = 1; }
+static void im_activate(void *d, struct zwp_input_method_v2 *o) {
+  (void)d; (void)o;
+  pending_active = 1;
+  /* zwp_text_input_v3's enable() resets purpose/hint to normal/none on the
+   * client side; mirror that here so a field that never calls
+   * set_content_type doesn't inherit the previous field's layout. Real
+   * content_type events (if any) arrive after this and before the matching
+   * done, overwriting these per the usual double-buffering. */
+  pending_purpose = PURPOSE_NORMAL;
+  pending_hint = 0;
+}
 static void im_deactivate(void *d, struct zwp_input_method_v2 *o) { (void)d; (void)o; pending_active = 0; }
 static void im_surrounding_text(void *d, struct zwp_input_method_v2 *o, const char *text, uint32_t cursor, uint32_t anchor) {
   (void)d; (void)o; (void)text; (void)cursor; (void)anchor;
 }
 static void im_text_change_cause(void *d, struct zwp_input_method_v2 *o, uint32_t cause) { (void)d; (void)o; (void)cause; }
 static void im_content_type(void *d, struct zwp_input_method_v2 *o, uint32_t hint, uint32_t purpose) {
-  (void)d; (void)o; (void)hint; (void)purpose; /* next step: numeric layout for phone/digits purposes */
+  (void)d; (void)o;
+  pending_hint = hint;
+  pending_purpose = purpose;
 }
 static void im_done(void *d, struct zwp_input_method_v2 *o) {
   (void)d; (void)o;
   done_count++;
+  int becoming_active = pending_active && active <= 0; /* active starts at -1 (unknown) */
+  cur_purpose = pending_purpose;
+  cur_hint = pending_hint;
+  if (pending_active) {
+    const char *name = content_name(cur_purpose, cur_hint);
+    if (becoming_active || strcmp(name, last_content) != 0) {
+      char line[32];
+      snprintf(line, sizeof line, "content %s", name);
+      emit(line);
+      strncpy(last_content, name, sizeof last_content - 1);
+      last_content[sizeof last_content - 1] = '\0';
+    }
+  }
   if (pending_active != active) {
     active = pending_active;
     emit(active ? "active" : "inactive");
