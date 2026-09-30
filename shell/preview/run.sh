@@ -188,6 +188,13 @@ oskcontent() {   # $1 gtk4-field.py purpose  $2 expected Phone.keyboardLayout  $
   wait_for keyboardLayout "$2" || true
   assert_eq "$4: keyboard picks the $2 layout" "$2" "$(ipc keyboardLayout)"
   shot "$3" 0.3
+  # The field dying is a real deactivate (like oskgtk's own check), which
+  # must reset the *layout* too, not just close the keyboard: this is the
+  # only direct coverage of imPurpose's reset in Phone.imFocusOut and
+  # ophone-im's reset-on-activate (Services/Phone.qml, ophone-im.c).
+  kill "${PIDS[-1]}" 2>/dev/null || true
+  wait_for isKeyboardOpen false || true
+  assert_eq "$4: field dying resets the layout" "qwerty" "$(ipc keyboardLayout)"
 }
 
 incoming_call() {   # what the phone app sends (docs/shell/INTEGRATION.md)

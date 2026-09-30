@@ -17,11 +17,12 @@ import qs.Widgets
 // shell/im/ophone-im.c, which decodes it from the input-method-v2
 // content_type event): a compact numeric keypad for digits/number fields, a
 // phone dial pad for phone/tel fields, full QWERTY with an email/url
-// convenience key otherwise, and full QWERTY (with a lock glyph, no other
-// change) for password fields -- passwords need the full character set, so
-// there's no separate "password layout", just a masked flag. Every layout
-// is exactly four rows, so implicitHeight/exclusiveZone -- and how much the
-// app shrinks -- never changes when the focused field changes.
+// convenience key otherwise, and full QWERTY (with a lock glyph on the
+// space bar, no other change) for password fields -- passwords need the
+// full character set, so there's no separate "password layout", just a
+// masked flag. Every layout is exactly four rows, so
+// implicitHeight/exclusiveZone -- and how much the app shrinks -- never
+// changes when the focused field changes.
 PanelWindow {
   id: kb
   visible: Phone.keyboardOpen && !Phone.locked
@@ -39,12 +40,13 @@ PanelWindow {
 
   readonly property string layout: Phone.keyboardLayout // qwerty | numeric | phone | email | url | password
   // Passwords still type through the normal QWERTY rows (see above): this
-  // just gates the lock glyph. Nothing in this shell shows a preview of
-  // typed characters or offers clipboard paste today, so there is nothing
-  // else to mask/disable here -- the masking of what's on screen is the
-  // focused app's own job (a text-input-v3 widget with purpose=password
-  // renders dots, e.g. GtkEntry's visibility=false); this flag is the gate
-  // for if either is ever added to the shell's own keyboard.
+  // just gates the lock glyph on the space bar (see label()). Nothing in
+  // this shell shows a preview of typed characters or offers clipboard
+  // paste today, so there is nothing else to mask/disable here -- the
+  // masking of what's on screen is the focused app's own job (a
+  // text-input-v3 widget with purpose=password renders dots, e.g.
+  // GtkEntry's visibility=false); this flag is the gate for if either is
+  // ever added to the shell's own keyboard.
   readonly property bool masked: layout === "password"
   // A fresh field means a fresh keyboard state: a caps-locked or symbols
   // page left over from the previous field must not bleed into this one.
@@ -134,7 +136,7 @@ PanelWindow {
       case "shift": return caps ? "\u{f0632}" : "\u{f0636}"
       case "bksp": return "\u{f006e}"
       case "enter": return "\u{f0311}"
-      case "space": return ""
+      case "space": return masked ? "\u{f033e}" : ""
       case "sym": return "?123"
       case "abc": return "ABC"
       default: return (shift || caps) && k.length === 1 ? k.toUpperCase() : k
@@ -185,18 +187,5 @@ PanelWindow {
         }
       }
     }
-  }
-
-  // Password fields: no separate layout, just this badge -- proof (to the
-  // user, and to the preview screenshot) that the shell recognized the
-  // field, next to the keys it leaves alone.
-  Glyph {
-    visible: kb.masked
-    anchors.top: parent.top
-    anchors.right: parent.right
-    anchors.margins: Theme.px(6)
-    text: "\u{f033e}"
-    size: 14
-    color: Theme.dim
   }
 }

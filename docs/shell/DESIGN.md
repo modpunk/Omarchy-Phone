@@ -423,9 +423,11 @@ packages (`python-gobject`/`python` and `bluez`/`bluez-utils` are already in
 ### On-screen keyboard
 
 No OSK is in the base install, and qt6-virtualkeyboard can't type into other
-apps' windows. The shell ships a small QML keyboard (letters, symbols, shift,
-backspace, enter) on a Top layer with an exclusive zone, so the app above it
-shrinks instead of being covered, never the reverse: input-method-v2 only
+apps' windows. The shell ships a small QML keyboard whose layout follows the
+focused field's content purpose -- QWERTY, a numeric keypad, a phone dial
+pad, or QWERTY with a password/email/url variant (see "Layout follows
+content purpose" below) -- on a Top layer with an exclusive zone, so the app
+above it shrinks instead of being covered, never the reverse: input-method-v2 only
 hands the input method surrounding text and a purpose hint, not a rectangle
 for every app, so there's no reliable coordinate to slide the keyboard around
 without risking it landing on top of the field instead of below it. Resizing
@@ -434,7 +436,7 @@ visible (GTK scrolls the focused entry into view when its window shrinks;
 foot just reflows).
 
 **Showing and hiding it.** `shell/im/ophone-im.c` is a small standalone
-process (no UI, ~150 lines) that binds `zwp_input_method_manager_v2` and
+process (no UI, ~260 lines) that binds `zwp_input_method_manager_v2` and
 becomes *an* input method for the seat — not a competing OSK, just a listener
 for `activate`/`deactivate`. Quickshell (`Services/Phone.qml`) spawns it as a
 child process and reads one line per state change from its stdout:
