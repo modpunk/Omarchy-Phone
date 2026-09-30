@@ -11,6 +11,11 @@
 #   through the input method, manual hide, refocus) and oskfoot (a terminal
 #   never auto-shows it; the manual toggle still does). Both assert, not just
 #   screenshot; failures print "FAIL ...".
+# Content-purpose layout scenarios (a GTK4 field with a given input-purpose):
+#   osknum (digits -> numeric keypad), oskphone (phone -> dial pad), oskpass
+#   (password -> masked QWERTY), oskemail/oskurl (-> QWERTY + convenience
+#   key), or "oskcontent" for all five. Each asserts Phone.keyboardLayout,
+#   not just the screenshot.
 #
 # Isolation: private XDG_RUNTIME_DIR (own Hyprland/Wayland/quickshell sockets),
 # private D-Bus session (the preview's notification daemon never touches the
@@ -159,13 +164,37 @@ clear_apps() {
   sleep 0.3
 }
 # A GTK4 window with a text field: the closest stand-in to the (not yet
-# built) Phone app's dial/search field for exercising text-input-v3.
-oskfield() { : >"$LOG/apps.out"; launch python3 "$HERE/gtk4-field.py"; }
+# built) Phone app's dial/search field for exercising text-input-v3. An
+# optional arg sets its input-purpose (digits, number, phone, email, url,
+# password, pin, ...; see gtk4-field.py), which GTK4 forwards as the real
+# text-input-v3 content_type the on-screen keyboard picks its layout from.
+oskfield() { : >"$LOG/apps.out"; launch python3 "$HERE/gtk4-field.py" "${1:-normal}"; }
 notify() { notify-send "$@" >>"$LOG/apps.out" 2>&1 || true; }
 seed_notifications() {
   notify -a "Messages" -i mail-message-new "Ada" "Are we still on for 6? I'll bring the charger."
   notify -a "Calendar" -i x-office-calendar "Standup in 10 minutes" "Room 2 / Jitsi"
   notify -a "Updates" -i system-software-update "3 updates ready" "Tap to review Arch updates"
+}
+
+# Content-purpose-driven layout scenarios: focus a field with a given
+# input-purpose and assert both that the keyboard auto-shows (the existing
+# focus-driven path, untouched) and that it picked the right layout
+# (Phone.keyboardLayout via the "keyboardLayout" ipc call -- the screenshot
+# alone doesn't prove which layout is showing, this does).
+oskcontent() {   # $1 gtk4-field.py purpose  $2 expected Phone.keyboardLayout  $3 screenshot name  $4 description
+  reset; clear_apps; oskfield "$1"
+  wait_for isKeyboardOpen true || true
+  assert_eq "$4: field focus auto-shows the keyboard" "true" "$(ipc isKeyboardOpen)"
+  wait_for keyboardLayout "$2" || true
+  assert_eq "$4: keyboard picks the $2 layout" "$2" "$(ipc keyboardLayout)"
+  shot "$3" 0.3
+  # The field dying is a real deactivate (like oskgtk's own check), which
+  # must reset the *layout* too, not just close the keyboard: this is the
+  # only direct coverage of imPurpose's reset in Phone.imFocusOut and
+  # ophone-im's reset-on-activate (Services/Phone.qml, ophone-im.c).
+  kill "${PIDS[-1]}" 2>/dev/null || true
+  wait_for isKeyboardOpen false || true
+  assert_eq "$4: field dying resets the layout" "qwerty" "$(ipc keyboardLayout)"
 }
 
 incoming_call() {   # what the phone app sends (docs/shell/INTEGRATION.md)
@@ -240,7 +269,13 @@ scenario() {
       assert_eq "manual toggle still shows it back" "true" "$(ipc isKeyboardOpen)"
       ;;
     keys)         for s in kbhome kbdock kbsearch kbshade kbnotif kbswitcher kbpower kbpin kbcall; do scenario "$s"; done ;;
-    all)          for s in home notification shade app keyboard switcher osd power lock pin call lockcall keys oskgtk oskfoot; do scenario "$s"; done ;;
+    osknum)       oskcontent digits numeric 26-osk-numeric "digits purpose" ;;
+    oskphone)     oskcontent phone phone 27-osk-phone "phone purpose" ;;
+    oskpass)      oskcontent password password 28-osk-password "password purpose" ;;
+    oskemail)     oskcontent email email 29-osk-email "email purpose" ;;
+    oskurl)       oskcontent url url 30-osk-url "url purpose" ;;
+    oskcontent)   for s in osknum oskphone oskpass oskemail oskurl; do scenario "$s"; done ;;
+    all)          for s in home notification shade app keyboard switcher osd power lock pin call lockcall keys oskgtk oskfoot oskcontent; do scenario "$s"; done ;;
     *) echo "unknown scenario: $1" >&2; return 1 ;;
   esac
 }

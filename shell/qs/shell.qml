@@ -47,6 +47,12 @@ ShellRoot {
     function closeShade(): void { Phone.closeShade() }
     function keyboard(): void { Phone.toggleKeyboard() }
     function isKeyboardOpen(): bool { return Phone.keyboardOpen }
+    // Preview/test helper: which layout the focused field's content purpose
+    // selected (qwerty, numeric, phone, email, url, password) and the raw
+    // purpose ophone-im reported it from (normal, numeric, phone, email,
+    // url, password -- see shell/im/ophone-im.c).
+    function keyboardLayout(): string { return Phone.keyboardLayout }
+    function contentPurpose(): string { return Phone.imPurpose }
     // Preview/test helper: type text through the input method when a field
     // is focused (falls back to nothing if none is -- Keyboard.qml is the
     // real typing path for wtype-driven keys).

@@ -5,10 +5,19 @@
 # what exercises the shell's auto-show/auto-hide path in shell/preview/run.sh.
 # Every keystroke that lands in the entry is printed to stdout so the preview
 # can grep its log and prove typing (not just visibility) worked.
+#
+# Optional argv[1]: a GtkInputPurpose name (case-insensitive), e.g. "digits",
+# "phone", "password", "email", "url" -- set via Gtk.Entry.set_input_purpose,
+# which GTK4 forwards as the text-input-v3 content_type (purpose) the real
+# on-screen keyboard reads (shell/im/ophone-im.c -> Services/Phone.qml ->
+# Surfaces/Keyboard.qml). "password" also turns off visibility (dots),
+# matching how a real password field is built.
 import sys
 import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib  # noqa: E402
+
+PURPOSE = (sys.argv[1] if len(sys.argv) > 1 else "normal").upper()
 
 
 def on_activate(app):
@@ -19,9 +28,13 @@ def on_activate(app):
     box.set_margin_bottom(24)
     box.set_margin_start(24)
     box.set_margin_end(24)
-    box.append(Gtk.Label(label="Omarchy Phone OSK test"))
+    box.append(Gtk.Label(label="Omarchy Phone OSK test (" + PURPOSE.lower() + ")"))
     entry = Gtk.Entry()
     entry.set_placeholder_text("type here")
+    purpose = getattr(Gtk.InputPurpose, PURPOSE, Gtk.InputPurpose.FREE_FORM)
+    entry.set_input_purpose(purpose)
+    if purpose == Gtk.InputPurpose.PASSWORD or purpose == Gtk.InputPurpose.PIN:
+        entry.set_visibility(False)
     entry.connect("changed", lambda e: print("TEXT:" + e.get_text(), flush=True))
     box.append(entry)
     win.set_child(box)
